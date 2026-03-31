@@ -1,4 +1,4 @@
-# # SplitDisk — Tool Specification
+# SplitDisk — Tool Specification
 
 **Version:** 0.1-draft  
 **Language:** Rust (stable toolchain)  
@@ -47,10 +47,13 @@ with cloud storage.
 SplitDisk consists of two programs:
 
 - **`splitdisk-create`** — run once on an air-gapped enrollment machine to
-  produce n USB drives from a source disk image.
+  produce n share carriers (USB drives, Galdralag tokens, or a mix) from a
+  source disk image.
 - **`splitdisk-assemble`** — a statically linked binary embedded in the
-  initramfs of every share drive. Runs at boot time to orchestrate
-  reconstruction.
+  initramfs of every share USB drive, or invoked on the assembly machine when
+  all shares are Galdralag tokens. Orchestrates reconstruction.
+
+**USB drive mode:**
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -81,6 +84,42 @@ At boot time on any share USB:
 │  Decrypt + Reed-Solomon decode                      │
 │  Write to target disk with checkpoint journal        │
 └─────────────────────────────────────────────────────┘
+```
+
+**Galdralag token mode:**
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  splitdisk-create                   │
+│                                                     │
+│  source image ──► [encrypt] ──► [Reed-Solomon       │
+│                                  split k-of-n]      │
+│                       │                             │
+│               [SSS split of session key]            │
+│                       │                             │
+│     ┌─────────────────┼─────────────────┐           │
+│  Token 1           Token 2  ...      Token n        │
+│  RRAM: key share   RRAM: key share   RRAM: key share│
+│  SD:   chunk 1     SD:   chunk 2     SD:   chunk n  │
+└─────────────────────────────────────────────────────┘
+
+At assembly time (any machine, no bootable share USB needed):
+
+┌─────────────────────────────────────────────────────┐
+│               splitdisk-assemble                    │
+│                                                     │
+│  Loop until k tokens inserted:                      │
+│    insert token ──► CCID session ──► PIN on token   │
+│    ──► read chunk from SD ──► read key share        │
+│        from RRAM ──► progress bar +1                │
+│  Reconstruct session key via SSS                    │
+│  Decrypt + Reed-Solomon decode                      │
+│  Write to target disk with checkpoint journal        │
+└─────────────────────────────────────────────────────┘
+```
+
+Mixed mode (some USB drives, some tokens) is also supported within the same
+scheme. The assembly agent handles both share types transparently.
 ```
 
 ---
@@ -218,33 +257,57 @@ database exists.
 
 ### 5.4 Galdralag Hardware Token Integration (Optional)
 
-When the Galdralag Baochip-1x token is inserted alongside (or instead of) a
-share USB, the assembly agent can:
+When `--galdralag` mode is used, the Galdralag Baochip-1x token is the
+**complete share** — no separate USB drive is needed or issued to the member.
+The token holds both the encrypted data chunk and the key share in its
+on-device storage (RRAM vault or optional SD card), and presents itself to
+the assembly machine over USB. The member carries only the token.
 
-- Use the token's **on-device Shamir share storage** instead of storing the key
-  share in the hidden USB partition. The token holds the share in its RRAM vault,
-  protected by the token's own PIN policy (minimum 5 characters, 3–10 attempts,
-  hardware zeroization on lockout).
-- Use the token's **BrainpoolP384r1 or BrainpoolP512r1 ECDH** for wrapping the
-  key share instead of the software Argon2id-derived key.
-- Leverage the token's **authenticated ephemeral ECDH** session protocol for
-  forward-secret communication between the assembly agent and the token over USB.
-- Use the token's **hardware TRNG** for any randomness needed during assembly.
+**Storage tiers on the token:**
 
-In this mode the USB drive itself carries no key share. The drive holds only
-its data chunk. The token (which the member carries separately or embedded in
-the USB housing) holds the key share, protected by the token's own PIN and
-hardware zeroization policy.
+| Storage | Capacity | Used for |
+|---------|----------|----------|
+| RRAM vault | Small (key material only) | SSS key share, PIN policy, metadata |
+| Optional SD card | Large (bulk data) | Encrypted data chunk |
 
-This integration requires:
-- A CCID-capable host (standard on any Linux system with `pcscd` and `ccid`)
-- The Galdralag `galdrad` daemon running (or equivalent CCID passthrough in
-  the initramfs environment)
-- The token provisioned with the share via `galdra device shamir-store` at
-  enrollment time
+If the token has an SD card fitted, the data chunk is stored there. If no SD
+card is present, the token cannot hold a data chunk and `--galdralag` mode
+requires SD card presence — `splitdisk-create` will check and abort if the
+card is absent or insufficient at enrollment time.
 
-The assembly agent auto-detects whether a Galdralag token is present on any
-USB port and switches to token-backed share retrieval accordingly.
+**What the token provides during assembly:**
+
+- **Data chunk** — streamed from SD card over USB to the assembly machine.
+- **Key share** — held in RRAM vault, released only after PIN and optional
+  biometric verification on the token itself.
+- **BrainpoolP384r1 or BrainpoolP512r1 ECDH** — wraps the key share
+  in transit using the token's on-device keys.
+- **Authenticated ephemeral ECDH session** — forward-secret channel between
+  token and assembly agent; the key share never appears on the USB bus in
+  plaintext.
+- **Hardware TRNG** — used for all randomness during enrollment and assembly.
+- **Hardware PIN counter with zeroization** — 3–10 configurable attempts;
+  on exhaustion the token zeroizes its RRAM, permanently destroying the share.
+
+**Assembly agent behaviour:**
+
+The agent detects a Galdralag token by its CCID descriptor on any USB port.
+When detected, it opens an ephemeral ECDH session, requests PIN entry (handled
+on the token's own PIN policy, not the software attempt counter), reads the
+data chunk from the SD card, and retrieves the decrypted key share over the
+authenticated channel. No separate USB drive insertion is prompted for that
+share.
+
+**Requirements:**
+
+- CCID-capable host (`pcscd` + `ccid` driver included in initramfs)
+- Token fitted with SD card of sufficient capacity (`ceil(image_size / k) + 10%`)
+- Token provisioned at enrollment via `galdra device shamir-store` and
+  `galdra device chunk-write`
+
+**Mixed modes** are supported: some members can hold USB drives (standard
+mode) and others can hold Galdralag tokens, within the same k-of-n scheme.
+The assembly agent handles both transparently in the same insertion loop.
 
 ---
 
@@ -433,11 +496,13 @@ the source.
 | `--shred` | Offer to overwrite source with random data after verified write | Off |
 | `--shred-passes <n>` | Reserved; always 1 (multiple passes not meaningful on modern media) | `1` |
 
-### 8.3 Pre-flight: Drive Requirement Announcement
+### 8.3 Pre-flight: Carrier Requirement Announcement
 
 Before any writes, `splitdisk-create` inspects the source image and the chosen
 k and n parameters, then prints a clear human-readable summary and requires
-explicit confirmation before proceeding:
+explicit confirmation before proceeding.
+
+**USB drive mode example:**
 
 ```
 Source:        /dev/sda  (476.9 GiB)
@@ -448,36 +513,57 @@ You will need:   6 × USB drives, each at least 128 GiB
                  (chunk size: ~159 GiB per drive including boot environment
                   and Reed-Solomon parity overhead)
 
-Drives provided: /dev/sdb  128 GiB  ✓
-                 /dev/sdc  128 GiB  ✓
-                 /dev/sdd  128 GiB  ✓
-                 /dev/sde  128 GiB  ✓
-                 /dev/sdf  128 GiB  ✗  INSUFFICIENT — need 159 GiB
-                 /dev/sdg  256 GiB  ✓
+Drives provided: /dev/sdb  256 GiB  ✓
+                 /dev/sdc  256 GiB  ✓
+                 /dev/sdd  256 GiB  ✓
+                 /dev/sde  256 GiB  ✓
+                 /dev/sdf  256 GiB  ✓
+                 /dev/sdg  128 GiB  ✗  INSUFFICIENT — need 159 GiB
 
-WARNING: /dev/sdf is too small. Aborting.
+WARNING: /dev/sdg is too small. Aborting.
 ```
 
-If all drives are sufficient, the summary instead ends with:
+**Galdralag token mode example:**
 
 ```
-All 6 drives are sufficient.
+Source:        /dev/sda  (476.9 GiB)
+Scheme:        3-of-6 (any 3 tokens reconstruct the content)
+Cipher:        BrainpoolP384r1 + AES-256-GCM
 
-This operation will DESTROY all data on the 6 target drives listed above.
+You will need:   6 × Galdralag tokens, each with SD card ≥ 159 GiB
+                 Key shares fit in RRAM — no minimum RRAM size beyond firmware.
+
+Tokens detected:
+  Token A  SD: 256 GiB  RRAM: OK  ✓
+  Token B  SD: 256 GiB  RRAM: OK  ✓
+  Token C  SD: 256 GiB  RRAM: OK  ✓
+  Token D  SD: 256 GiB  RRAM: OK  ✓
+  Token E  SD: 256 GiB  RRAM: OK  ✓
+  Token F  SD:  64 GiB  RRAM: OK  ✗  INSUFFICIENT — SD needs ≥ 159 GiB
+
+WARNING: Token F SD card is too small. Aborting.
+```
+
+If all carriers are sufficient, the summary ends with:
+
+```
+All 6 carriers are sufficient.
+
+This operation will DESTROY all data on the 6 carriers listed above.
 Type YES to continue, or press Ctrl-C to abort: _
 ```
 
-The tool refuses to proceed unless the operator types `YES` exactly. Drive
-size is calculated as:
+Required size per carrier is calculated as:
 
 ```
-required_per_drive = ceil(image_size / k)
-                   + rs_parity_overhead       (~10% of chunk size)
-                   + boot_environment_size    (512 MiB fixed)
+required_per_carrier = ceil(image_size / k)
+                     + rs_parity_overhead       (~10% of chunk size)
+                     + boot_environment_size    (512 MiB, USB drives only)
 ```
 
-All six (or n) drives must individually meet `required_per_drive`. The tool
-does not continue if any drive is undersized.
+For Galdralag tokens the boot environment is not stored on the token, so the
+SD card requirement is simply `ceil(image_size / k) + 10%`. The tool refuses
+to proceed if any carrier is undersized.
 
 ### 8.4 Enrollment Session
 
@@ -652,25 +738,27 @@ splitdisk/
 
 ## 11. Galdralag Integration Summary
 
-When `--galdralag` is passed to `splitdisk-create`, each member receives a
-**Galdralag Baochip-1x token** instead of (or alongside) their share USB.
+When `--galdralag` is passed to `splitdisk-create`, each member receives only
+a **Galdralag Baochip-1x token**. No separate USB drive is issued. The token
+is the complete share — it holds both the encrypted data chunk (on SD card)
+and the key share (in RRAM vault).
 
-| Aspect | Without Galdralag | With Galdralag |
-|--------|-------------------|----------------|
+| Aspect | USB drive mode | Galdralag token mode |
+|--------|----------------|----------------------|
+| What the member carries | USB drive | Galdralag token only |
+| Data chunk storage | USB drive partition | Token SD card |
 | Key share storage | Encrypted in USB hidden partition | On-device RRAM vault |
 | PIN enforcement | Software attempt counter | Hardware PIN counter with zeroization |
 | Biometric | USB iris scanner + software | Optional; token PIN suffices |
 | Encryption of key share | Argon2id-derived AES-256-GCM | BrainpoolP384r1 ECDH on-device |
 | Forward secrecy | Not applicable | Authenticated ephemeral ECDH session |
 | TRNG | OS CSPRNG | Hardware TRNG on Baochip-1x |
+| SD card required | No | Yes (for data chunk storage) |
+| Mixed mode with USB shares | N/A | Yes — both types can coexist in one scheme |
 
-The USB drive in Galdralag mode carries only the data chunk and bootloader. The
-key share lives entirely on the token. A member therefore carries two items: the
-USB drive and their Galdralag token. Both must be present and authenticated for
-their share to be accepted.
-
-The Galdralag token connects over standard CCID. The initramfs includes
-`pcscd` and the `ccid` driver in a minimal configuration.
+The assembly machine boots from any standard Linux USB or its own disk. The
+Galdralag tokens are inserted one at a time into any USB port. The initramfs
+includes `pcscd` and the `ccid` driver so no additional host setup is needed.
 
 ---
 
