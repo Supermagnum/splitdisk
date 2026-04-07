@@ -929,7 +929,7 @@ and the key share (in RRAM vault).
   it reaches its holder could modify the bootloader or initramfs. Mitigations:
   tamper-evident packaging, and optionally signing the initramfs with Ed25519
   (matching the pattern used by Galdralag firmware's boot0 verification).
-- **Rubber hose**: a holder can be coerced into providing their PIN. The k-of-n
+- **Rubber hose or 5$ hammer**: a holder can be coerced into providing their PIN. The k-of-n
   threshold ensures one holder's coercion is insufficient for reconstruction.
   The holder genuinely does not know how many others exist.
 - **Share count leakage**: the progress bar reveals how many shares have been
