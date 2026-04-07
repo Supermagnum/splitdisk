@@ -1,0 +1,22 @@
+---
+description: SplitDisk absolute prohibitions — crypto, secrets, RNG, verification, logging
+alwaysApply: true
+---
+
+# SplitDisk — Absolute prohibitions (Rules 1–7)
+
+Obey **AGENTS.md** and **README.md**. README.md wins on any conflict.
+
+1. **No custom cryptography in-tree.** Use only audited crates listed in README Section 4.4 / 16 (e.g. `vsss-rs`, `reed-solomon-erasure`, `chacha20poly1305`). Never hand-roll ciphers, KDFs, SSS, RS, or hashes.
+
+2. **Zeroize secrets** with `zeroize` on every path; explicit `.zeroize()` for session keys, shares, PIN-derived keys, templates, Argon2 output.
+
+3. **Constant-time secret compares** via `subtle::ConstantTimeEq`, not `==` on secret bytes.
+
+4. **TUI:** Preserve holder anonymity per README Section 7 and 13 — no share index, k, n, or identity leakage beyond what the spec already allows.
+
+5. **Randomness:** OS CSPRNG or spec-approved TRNG only for key material; never weak or deterministic RNGs.
+
+6. **Verification cannot be skipped.** Post-write reconstruction check (e.g. BLAKE3 vs source) is mandatory; no bypass flags. Shred only after verified success.
+
+7. **Never log or print secrets** — keys, shares, PINs, Argon2 output, biometrics, intermediate crypto state. Debug builds must not leak secrets.

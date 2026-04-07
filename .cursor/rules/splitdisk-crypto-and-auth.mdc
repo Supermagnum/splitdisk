@@ -1,0 +1,14 @@
+---
+description: SplitDisk cipher suite, PQ gating, PIN, auth UX — CESS / README
+alwaysApply: true
+---
+
+# SplitDisk — Crypto suite and authentication (Rules 8–12)
+
+**Normative:** README.md Sections 4, 5, 15, 16. CESS-FULL: Brainpool ECDH; KDF **HKDF-BLAKE3**; bulk ChaCha20-Poly1305 / Serpent / Twofish / cascades as specified. **ML-KEM excluded**; PQ is **FrodoKEM-1344** behind `--features pq` with runtime audit warning. Do not add AES-GCM or NIST-only curves as defaults — they conflict with the published spec.
+
+- **Rule 8:** Do not introduce new cipher suites or hybrid constructions without a spec change.
+- **Rule 9:** Keep PQ behind `--features pq`; warn about audit status.
+- **Rule 10:** PIN minimum 5 alphanumeric characters validated **before** hashing (README 5.2).
+- **Rule 11:** Enforce attempt limits and cool-down per README 5.2 (defaults configurable at creation).
+- **Rule 12:** Generic failure strings only (README 7.8); do not reveal which factor failed.

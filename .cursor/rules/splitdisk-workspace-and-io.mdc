@@ -1,0 +1,14 @@
+---
+description: SplitDisk crate layout, static musl assemble, no network, fsync
+alwaysApply: true
+---
+
+# SplitDisk — Workspace and I/O (Rules 17–20)
+
+**Crates (do not merge without direction):** `splitdisk-core`, `splitdisk-auth`, `splitdisk-create`, `splitdisk-assemble`, `splitdisk-tui`, `splitdisk-image` (README 11).
+
+- **Rule 18:** `splitdisk-assemble` must be **statically linked** (`x86_64-unknown-linux-musl` or equivalent) for initramfs.
+
+- **Rule 19:** **No network I/O** in any crate — no sockets, HTTP, cloud (README 14).
+
+- **Rule 20:** Writes to block devices/files for chunks, journal, shred: **fsync** after blocks; shred completion includes `BLKFLSBUF` per README 8.6.

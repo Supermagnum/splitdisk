@@ -1,0 +1,14 @@
+---
+description: SplitDisk approved crypto crates — README Sections 4.4 and 16
+alwaysApply: true
+---
+
+# SplitDisk — Approved cryptographic dependencies
+
+Do not substitute, fork, or vendor crypto crates except for security advisories with review.
+
+Use README.md **Section 4.4** table and **Section 16** `Cargo.toml` list. Core crypto includes: `chacha20poly1305`, `serpent`, `twofish`, `poly1305`, `p384`, `hkdf`, `blake3`, `argon2`, `vsss-rs`, `reed-solomon-erasure`, `zeroize`, `subtle`; optional `sequoia-openpgp`; optional `pqcrypto-frodo` (FrodoKEM-1344, feature-gated).
+
+Non-crypto: `ratatui`, `nix`, `rusb`, `gpt`, `fatfs`, `cpio`, `flate2` per image builder needs (README 16).
+
+Adding any new crypto crate requires audit review and README update.

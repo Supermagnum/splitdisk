@@ -1,0 +1,22 @@
+---
+description: SplitDisk Galdralag token rules and source shred procedure
+alwaysApply: true
+---
+
+# SplitDisk — Galdralag (Rules 21–23) and shred (24–26)
+
+**Galdralag**
+
+- **Rule 21:** Key shares from token over **authenticated ephemeral ECDH**; never plaintext on USB bus (README 5.4).
+
+- **Rule 22:** Detect tokens by **CCID**; initramfs bundles `pcscd` + CCID driver (README 5.4, 10.3).
+
+- **Rule 23 (recommended):** Mixed USB + token shares in one loop; user not told share type.
+
+**Shred**
+
+- **Rule 24:** Shred only with `--shred`, after successful verification, plus interactive `SHRED` confirmation (README 8.6).
+
+- **Rule 25:** Always show SSD/flash warning; never suppress (README 8.6).
+
+- **Rule 26:** Exactly **one** random pass; multi-pass not implemented (`--shred-passes` reserved).

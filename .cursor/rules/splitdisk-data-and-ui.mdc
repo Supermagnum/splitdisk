@@ -1,0 +1,14 @@
+---
+description: SplitDisk biometrics, metadata, duplicates, pre-flight sizing
+alwaysApply: true
+---
+
+# SplitDisk — Data handling and UI safety (Rules 13–16)
+
+- **Rule 13:** Biometric templates encrypted at rest with PIN-derived key; decrypt only after PIN; zeroize after compare; no central biometric DB (README 5.3).
+
+- **Rule 14:** `meta.bin` encrypted with `K_pin`; drive looks like ordinary boot USB to observers without PIN (README 6).
+
+- **Rule 15:** Duplicate drive message must be generic — no share index or identity (README 7.5).
+
+- **Rule 16 (recommended):** Pre-flight: abort if carriers undersized; formula in README 8.3 (`ceil(image_size/k)` + RS overhead ~10% + 512 MiB boot for USB).

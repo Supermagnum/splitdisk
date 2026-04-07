@@ -1,0 +1,20 @@
+---
+description: SplitDisk out-of-scope items and AI behaviour (no invented crypto)
+alwaysApply: true
+---
+
+# SplitDisk — Out of scope and AI conduct (Rules 27–30)
+
+**Out of scope (README 14):** Network share distribution, cloud KMS, Windows/macOS `splitdisk-create`, WebAuthn/FIDO2, VeraCrypt/LUKS, remote attestation, online key management. Decline and cite the spec.
+
+**AI behaviour**
+
+- **Rule 27:** Do not guess cryptographic correctness; defer to cryptographer when uncertain.
+
+- **Rule 28:** Do not claim security properties not stated in README.md without labeling them as new and unreviewed.
+
+- **Rule 29 (recommended):** Explicit errors; zeroize on error paths; avoid bare `.unwrap()` in security-sensitive paths.
+
+- **Rule 30 (recommended):** If README.md does not specify a behaviour, say so and ask for a design decision instead of inventing.
+
+Full rule table: **AGENTS.md**.

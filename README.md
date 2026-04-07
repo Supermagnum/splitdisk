@@ -5,7 +5,8 @@
 **Status:** Specification only — not yet implemented  
 **License:** GPL-3.0 (matching Galdralag-firmware)  
 **CESS conformance:** CESS-FULL (targets CESS v0.2-draft; see §4 and §15)  
-**Glossary:** [Plain-language definitions of technical terms](docs/GLOSSARY.md)
+**Glossary:** [Plain-language definitions of technical terms](docs/GLOSSARY.md)  
+**AI contributors:** [AGENTS.md](AGENTS.md) (see also [CLAUDE.md](CLAUDE.md)); Cursor rules live in `.cursor/rules/*.mdc`
 
 ---
 
@@ -883,7 +884,10 @@ target USB device.
 
 ```
 splitdisk/
+├── AGENTS.md                   (AI contributor guidelines; normative with README)
+├── CLAUDE.md                   (pointer to AGENTS.md for Claude Code)
 ├── Cargo.toml                  (workspace)
+├── .cursor/rules/              (Cursor IDE rules, split *.mdc files)
 ├── crates/
 │   ├── splitdisk-create/       (enrollment tool)
 │   ├── splitdisk-assemble/     (initramfs agent)
