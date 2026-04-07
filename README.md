@@ -960,7 +960,7 @@ and the key share (in RRAM vault).
 
 ## 15. CESS Conformance and Suite Identifiers
 
-SplitDisk targets **CESS-FULL** conformance (CESS v0.2-draft). The following
+SplitDisk targets **CESS-FULL** conformance (CESS v0.2 ). The following
 table maps `--cipher` + `--bulk-cipher` combinations to their CESS `suite_id`
 values. Suite IDs are used internally and, in Mode A, are transmitted inside
 the authenticated outer ChaCha20-Poly1305 envelope only — never in cleartext.
