@@ -4,7 +4,8 @@
 **Language:** Rust (stable toolchain, `x86_64-unknown-linux-musl` for embedded binary)  
 **Status:** Specification only — not yet implemented  
 **License:** GPL-3.0 (matching Galdralag-firmware)  
-**CESS conformance:** CESS-FULL (targets CESS v0.2-draft; see §4 and §15)
+**CESS conformance:** CESS-FULL (targets CESS v0.2-draft; see §4 and §15)  
+**Glossary:** [Plain-language definitions of technical terms](docs/GLOSSARY.md)
 
 ---
 
@@ -892,6 +893,7 @@ splitdisk/
 │   └── splitdisk-tui/          (ratatui UI components)
 └── docs/
     ├── SPEC.md                 (this document)
+    ├── GLOSSARY.md             (plain-language term definitions)
     ├── CRYPTO.md               (detailed cryptographic rationale)
     └── GALDRALAG.md            (Galdralag integration guide)
 ```
