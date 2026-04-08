@@ -233,8 +233,8 @@ by the embedded initramfs binary.
 | `sequoia-openpgp` | Optional GPG envelope (Brainpool keys) | Active maintenance |
 | `pqcrypto-frodo` | FrodoKEM-1344 (feature-gated) | Pending independent audit |
 
-One can also check integrity of crates with this tool:
-https://github.com/Supermagnum/crypto-verify
+One can also check integrity of crates with this when the pr is closed:
+https://github.com/rust-lang/cargo/issues/16850
 
 
 Post-quantum features are gated behind `--features pq` and carry a warning
