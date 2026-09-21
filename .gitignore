@@ -1,0 +1,33 @@
+# Build
+/target/
+**/target/
+# Cargo.lock is committed for reproducible Docker/CI builds.
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test fixtures (large images)
+testdata/*.img
+testdata/*.bin
+!testdata/.gitkeep
+
+# Fuzz corpora artifacts
+**/fuzz/artifacts/
+**/fuzz/corpus/
+
+# Coverage / profiling
+*.profraw
+*.profdata
+lcov.info
+coverage/
+
+# Secrets / local env (never commit)
+.env
+*.pem
+*.key

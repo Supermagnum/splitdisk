@@ -1,0 +1,50 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/splitdisk-core",
+    "crates/splitdisk-auth",
+    "crates/splitdisk-create",
+    "crates/splitdisk-assemble",
+    "crates/splitdisk-tui",
+    "crates/splitdisk-image",
+]
+default-members = ["crates/splitdisk-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+rust-version = "1.75"
+authors = ["SplitDisk contributors"]
+repository = "https://github.com/splitdisk/splitdisk"
+
+[workspace.dependencies]
+# Core crypto (approved; see docs/SPEC.md §4.4 / §16)
+chacha20poly1305 = "0.10"
+serpent = "0.1"
+twofish = "0.1"
+poly1305 = "0.8"
+hkdf = "0.12"
+argon2 = "0.5"
+blake3 = "1"
+zeroize = { version = "1", features = ["derive"] }
+subtle = "2"
+vsss-rs = "5"
+reed-solomon-erasure = "6"
+getrandom = "0.2"
+rand_core = "0.6"
+rand_chacha = "0.3"
+thiserror = "1"
+proptest = "1"
+
+# Curves (Brainpool; see docs/OPEN-QUESTIONS.md (a))
+bp256 = "0.6"
+bp384 = "0.6"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+panic = "unwind"

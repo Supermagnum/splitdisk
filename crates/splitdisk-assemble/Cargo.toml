@@ -1,0 +1,14 @@
+[package]
+name = "splitdisk-assemble"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Initramfs assembly agent (Phase 2+)"
+
+[[bin]]
+name = "splitdisk-assemble"
+path = "src/main.rs"
+
+[dependencies]
+splitdisk-core = { path = "../splitdisk-core", version = "0.1.0" }
