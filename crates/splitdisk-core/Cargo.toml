@@ -1,0 +1,36 @@
+[package]
+name = "splitdisk-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Shared crypto, Reed-Solomon, SSS wrappers, and on-drive format parsers for SplitDisk"
+readme = "../../README.md"
+
+[features]
+default = []
+# Raw block-device I/O. OFF by default. Never enable in CI or tests.
+# Without this feature, any path under /dev is rejected.
+raw-devices = []
+
+[dependencies]
+chacha20poly1305 = { workspace = true }
+blake3 = { workspace = true }
+zeroize = { workspace = true }
+subtle = { workspace = true }
+vsss-rs = { workspace = true }
+reed-solomon-erasure = { workspace = true }
+getrandom = { workspace = true }
+rand_core = { workspace = true }
+rand_chacha = { workspace = true }
+thiserror = { workspace = true }
+hkdf = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+hex = "0.4"
+tempfile = "3"
+
+[lib]
+name = "splitdisk_core"
+path = "src/lib.rs"
