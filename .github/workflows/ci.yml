@@ -22,7 +22,9 @@ jobs:
       # skips Phase 4 blob builds/repro when those trees are absent.
       - name: Run fmt, clippy, test, deny in container
         run: |
-          mkdir -p testdata
+          # Host checkout is not owned by container uid 1000; make testdata writable.
+          mkdir -p testdata/vendor-blobs
+          chmod -R a+rwX testdata
           docker run --rm \
             --network none \
             --read-only \
@@ -37,4 +39,4 @@ jobs:
             -e SPLITDISK_BLOB_CACHE=/work/testdata/vendor-blobs \
             -e HOME=/home/builder \
             splitdisk-test:ci \
-            bash -c 'mkdir -p "$CARGO_TARGET_DIR" "$SPLITDISK_BLOB_CACHE" && bash scripts/docker-test-inner.sh'
+            bash -c 'mkdir -p "$CARGO_TARGET_DIR" && bash scripts/docker-test-inner.sh'
