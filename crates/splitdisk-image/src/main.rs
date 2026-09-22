@@ -53,12 +53,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let req = ImageRequest {
-        output: args.output,
-        size,
-        drive_uuid,
-        assemble_bin,
-    };
+    let req = ImageRequest::production(args.output, size, drive_uuid, assemble_bin);
     build_base_image(&req)?;
     Ok(())
 }

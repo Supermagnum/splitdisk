@@ -80,6 +80,24 @@ pub fn write_gpt(
     disk.write()
         .map_err(|e| Error::Gpt(format!("write GPT: {e}")))?;
 
+    // The `gpt` crate does not write LBA0; a protective MBR must be added
+    // explicitly (see gpt-3.1 tests). Without 0x55AA + type 0xEE, OVMF leaves
+    // the disk as a single BLK without partitions (BdsDxe "Not Found").
+    let lb_size = (image_size / SECTOR_SIZE).saturating_sub(1);
+    let lb_size_u32 = u32::try_from(lb_size).unwrap_or(0xFFFF_FFFF);
+    let mbr = gpt::mbr::ProtectiveMBR::with_lb_size(lb_size_u32);
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(image_path)
+            .map_err(|e| Error::Gpt(format!("open for protective MBR: {e}")))?;
+        mbr.overwrite_lba0(&mut file)
+            .map_err(|e| Error::Gpt(format!("write protective MBR: {e}")))?;
+        file.sync_all()
+            .map_err(|e| Error::Gpt(format!("fsync after protective MBR: {e}")))?;
+    }
+
     let meta = std::fs::metadata(image_path).map_err(|e| Error::Io(e.to_string()))?;
     if meta.len() != image_size {
         return Err(Error::Gpt(format!(

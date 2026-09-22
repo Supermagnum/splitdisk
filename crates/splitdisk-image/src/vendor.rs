@@ -1,9 +1,10 @@
-//! Vendored boot blobs for Phase 4 (real GRUB / kernel / CCID builds).
+//! Vendored boot blobs for Phase 4/5 (real GRUB / kernel / CCID builds).
 //!
 //! Artifacts are produced offline by `scripts/build-vendor-blobs.sh` from the
 //! human-verified trees under `vendor/{grub,linux,ccid,gnulib}/` (see
 //! `docs/VENDORING.md`). BLAKE3 pins below catch accidental swaps. The `/init`
-//! stub remains a Phase 3 synthetic ELF (mount/exec init is later work).
+//! path uses a static stub that prints `SPLITDISK_INIT_REACHED` (Phase 5);
+//! mount/exec init per SPEC §10.3 remains later work.
 
 use crate::error::{Error, Result};
 use std::fmt::Write as _;
@@ -39,7 +40,7 @@ pub const COMMIT_CCID: &str = "c37cf6cb42279ce9648ff7314180c866d68f9e0d";
 ///   (avoids embedding bind-mount names like `/src` vs `/work` via `__FILE__`).
 /// - **GRUB:** still may vary between cold rebuilds; pin catches accidental swaps
 ///   when the cache matches the recorded digest.
-pub const PIN_GRUB_EFI: &str = "3588528d08ed0d1935fd4a0ab892642ee0a19624a6c7133203ee9d1260e27205";
+pub const PIN_GRUB_EFI: &str = "ff42b845dc8d04ef7d4dab0662051d285645e0e18939e47aae0ff81830d7029e";
 /// Confirmed byte-reproducible in the Phase 4 Docker image (see pin block above).
 pub const PIN_KERNEL: &str = "84fd57508902cf83c8f80ca4293a004106ed60ef579310de11a78bbd35f1812d";
 /// Confirmed byte-reproducible with canonical CCID build paths (see pin block above).
@@ -173,14 +174,53 @@ pub fn hex_blake3(data: &[u8]) -> String {
     s
 }
 
+/// Marker printed by Phase 5 nostdlib stub (legacy). Phase 6 `/init` prints
+/// `SPLITDISK_INIT_STARTING` / `SPLITDISK_INIT_MOUNTS_OK` then execs assemble.
+pub const INIT_REACHED_MARKER: &str = "SPLITDISK_INIT_REACHED";
+
+/// Load CCID `Info.plist` generated beside the IFD `.so` (Phase 6 / item (k)).
+pub fn load_ccid_info_plist() -> Result<Vec<u8>> {
+    let path = blob_cache_dir()?.join(format!("ccid/{COMMIT_CCID}/Info.plist"));
+    std::fs::read(&path).map_err(|e| {
+        Error::Io(format!(
+            "read CCID Info.plist at {}: {e}; rebuild with scripts/build-vendor-blobs.sh",
+            path.display()
+        ))
+    })
+}
+
 /// Marker used only by the synthetic `/init` stub (not GRUB/kernel/CCID).
 pub const PLACEHOLDER_BANNER: &[u8] =
     b"SPLITDISK-SYNTHETIC-PLACEHOLDER-v1\nNOT A REAL BOOTABLE COMPONENT\n";
 
-/// Minimal x86_64 ELF64 that issues `exit_group(0)` — placeholder `/init`.
+/// Default `/init` for image builds: prefer the Docker-baked static stub
+/// (`/usr/local/share/splitdisk/init-stub` or `$SPLITDISK_INIT_STUB`), else the
+/// Phase 3 synthetic ELF (unit tests without the container binary).
+pub fn default_init_stub() -> Vec<u8> {
+    if let Ok(p) = std::env::var("SPLITDISK_INIT_STUB") {
+        if let Ok(b) = std::fs::read(&p) {
+            if !b.is_empty() {
+                return b;
+            }
+        }
+    }
+    let baked = Path::new("/usr/local/share/splitdisk/init-stub");
+    if baked.is_file() {
+        if let Ok(b) = std::fs::read(baked) {
+            if !b.is_empty() {
+                return b;
+            }
+        }
+    }
+    synthetic_init_stub()
+}
+
+/// Minimal x86_64 ELF64 that issues `exit_group(0)` — unit-test placeholder.
 ///
-/// This is **not** the real mount/exec init from SPEC §10.3; it only occupies
-/// the correct path with executable mode so the initramfs layout can be tested.
+/// Prefixed with [`PLACEHOLDER_BANNER`] so it is obviously not a production
+/// bootable `/init`. [`default_init_stub`] prefers the Docker-baked nostdlib
+/// stub; do not use this exiting stub in QEMU images (exit makes the kernel
+/// attempt a real root mount and panic).
 pub fn synthetic_init_stub() -> Vec<u8> {
     let mut elf = vec![
         0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

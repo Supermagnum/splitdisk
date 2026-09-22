@@ -85,10 +85,11 @@ echo "epochs: grub=$GRUB_EPOCH linux=$LINUX_EPOCH ccid=$CCID_EPOCH"
 
 # ---------- GRUB ----------
 GRUB_OUT="$CACHE/grub/$GRUB_COMMIT/BOOTX64.EFI"
+TEST_SERIAL_OUT="$CACHE/grub/$GRUB_COMMIT/BOOTX64-TEST-SERIAL.EFI"
 if [[ "$BUILD_ONLY" != "all" && "$BUILD_ONLY" != "grub" ]]; then
   :
-elif [[ -f "$GRUB_OUT" && "$FORCE" != "1" ]]; then
-  echo "== GRUB: cache hit $GRUB_OUT =="
+elif [[ -f "$GRUB_OUT" && -f "$TEST_SERIAL_OUT" && "$FORCE" != "1" ]]; then
+  echo "== GRUB: cache hit $GRUB_OUT (+ test-serial) =="
 else
   echo "== GRUB: building (writable copies of grub+gnulib; vendor/ untouched) =="
   t0=$(date +%s)
@@ -119,6 +120,7 @@ else
 set timeout=0
 set default=0
 menuentry "SplitDisk" {
+    search --no-floppy --file /boot/vmlinuz --set=root
     linux /boot/vmlinuz quiet loglevel=0 rd.udev.log_level=0
     initrd /boot/initramfs.img
 }
@@ -126,11 +128,30 @@ EOF
   "$BUILD_ROOT/grub-prefix/bin/grub-mkstandalone" \
     -O x86_64-efi \
     -o "$GRUB_OUT" \
-    --modules="fat part_gpt ext2 linux normal configfile search search_fs_file search_label search_fs_uuid echo test all_video gfxterm video video_fb font terminal chain" \
+    --modules="fat part_gpt ext2 linux normal configfile search search_fs_file search_label search_fs_uuid echo test all_video gfxterm video video_fb font terminal chain gzio" \
     "boot/grub/grub.cfg=$CFG"
+  # Phase 5 test-only EFI: serial console embedded (production BOOTX64.EFI untouched).
+  CFG_SERIAL="$BUILD_ROOT/grub-test-serial.cfg"
+  cat >"$CFG_SERIAL" <<'EOF'
+serial --unit=0 --speed=115200
+terminal_input serial
+terminal_output serial
+set timeout=0
+set default=0
+menuentry "SplitDisk" {
+    search --no-floppy --file /boot/vmlinuz --set=root
+    linux /boot/vmlinuz console=ttyS0,115200n8 earlyprintk=serial,ttyS0,115200 rdinit=/init
+    initrd /boot/initramfs.img
+}
+EOF
+  "$BUILD_ROOT/grub-prefix/bin/grub-mkstandalone" \
+    -O x86_64-efi \
+    -o "$TEST_SERIAL_OUT" \
+    --modules="fat part_gpt ext2 linux normal configfile search search_fs_file search_label search_fs_uuid echo test all_video gfxterm video video_fb font terminal chain serial gzio" \
+    "boot/grub/grub.cfg=$CFG_SERIAL"
   t1=$(date +%s)
   echo "GRUB build wall seconds: $((t1 - t0))"
-  ls -la "$GRUB_OUT"
+  ls -la "$GRUB_OUT" "$TEST_SERIAL_OUT"
 fi
 
 # ---------- Linux ----------
@@ -174,6 +195,14 @@ else
   conf --enable CONFIG_BLK_DEV_INITRD
   conf --enable CONFIG_EFI
   conf --enable CONFIG_EFI_STUB
+  # Serial console for Phase 5 QEMU tests (console=ttyS0); production GRUB still
+  # uses quiet cmdline, so this only matters when a test-only grub.cfg enables it.
+  conf --enable CONFIG_SERIAL_8250
+  conf --enable CONFIG_SERIAL_8250_CONSOLE
+  conf --enable CONFIG_SERIAL_CONSOLE
+  conf --enable CONFIG_DEVTMPFS
+  conf --enable CONFIG_DEVTMPFS_MOUNT
+  conf --enable CONFIG_EARLY_PRINTK
   conf --disable CONFIG_CRYPTO_CHACHA20
   make -C vendor/linux O="$O" olddefconfig
   make -C vendor/linux O="$O" -j"$JOBS" \
@@ -191,10 +220,11 @@ fi
 
 # ---------- CCID (Meson) ----------
 CCID_OUT="$CACHE/ccid/$CCID_COMMIT/ifd-ccid.so"
+CCID_PLIST="$CACHE/ccid/$CCID_COMMIT/Info.plist"
 if [[ "$BUILD_ONLY" != "all" && "$BUILD_ONLY" != "ccid" ]]; then
   :
-elif [[ -f "$CCID_OUT" && "$FORCE" != "1" ]]; then
-  echo "== CCID: cache hit $CCID_OUT =="
+elif [[ -f "$CCID_OUT" && -f "$CCID_PLIST" && "$FORCE" != "1" ]]; then
+  echo "== CCID: cache hit $CCID_OUT (+ Info.plist) =="
 else
   echo "== CCID: meson build (canonical /tmp paths + prefix-map) =="
   t0=$(date +%s)
@@ -227,16 +257,25 @@ else
     exit 1
   fi
   cp -a "$SO" "$CCID_OUT"
+  # Phase 6: Info.plist is required for pcscd to load the IFD bundle (item (k)).
+  PLIST="$(find "$B" -type f -name 'Info.plist' | head -1)"
+  if [[ -z "$PLIST" ]]; then
+    echo "CCID: Info.plist missing under $B (meson custom_target)" >&2
+    find "$B" -type f | head -80 >&2
+    exit 1
+  fi
+  cp -a "$PLIST" "$(dirname "$CCID_OUT")/Info.plist"
   t1=$(date +%s)
   echo "CCID build wall seconds: $((t1 - t0))"
   echo "CCID source so: $SO"
+  echo "CCID Info.plist: $PLIST"
   echo "CCID path probe (should lack /src|/work|/vendor absolute):"
   strings "$CCID_OUT" | grep -E '/(src|work|vendor|home)/' | head -5 || echo '(none)'
   if command -v readelf >/dev/null 2>&1; then
     echo "CCID readelf notes (build-id should be absent):"
     readelf -n "$CCID_OUT" 2>/dev/null | head -20 || true
   fi
-  ls -la "$CCID_OUT"
+  ls -la "$CCID_OUT" "$(dirname "$CCID_OUT")/Info.plist"
 fi
 
 # ---------- pins ----------

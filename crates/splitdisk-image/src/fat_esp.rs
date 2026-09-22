@@ -1,4 +1,8 @@
 //! FAT32 ESP construction (`fatfs`), SPEC §6 / §10.4.
+//!
+//! Phase 5: OVMF boot failures were caused by a missing protective MBR
+//! (OPEN-QUESTIONS (n)), not by this formatter. `fatfs` without `chrono`
+//! keeps ESP timestamps fixed for GPT+ESP byte reproducibility.
 
 use crate::derive_guid;
 use crate::error::{Error, Result};
@@ -6,12 +10,31 @@ use fatfs::{FileSystem, FormatVolumeOptions, FsOptions};
 use splitdisk_core::DRIVE_UUID_LEN;
 use std::io::{Read, Seek, Write};
 
-/// GRUB config text matching SPEC §10.4.
+/// GRUB config text matching SPEC §10.4 (quiet; no serial console).
+/// `search` is required: grub-mkstandalone embeds this on memdisk, so paths
+/// must be resolved on the ESP that holds `/boot/vmlinuz`.
 pub const GRUB_CFG: &str = r#"set timeout=0
 set default=0
 
 menuentry "SplitDisk" {
+    search --no-floppy --file /boot/vmlinuz --set=root
     linux /boot/vmlinuz quiet loglevel=0 rd.udev.log_level=0
+    initrd /boot/initramfs.img
+}
+"#;
+
+/// Test-only GRUB config: serial console for QEMU smoke tests (Phase 5).
+/// Never written by the default `build_base_image` path — only when
+/// `ImageRequest::test_serial_console` is set.
+pub const GRUB_CFG_TEST_SERIAL: &str = r#"serial --unit=0 --speed=115200
+terminal_input serial
+terminal_output serial
+set timeout=0
+set default=0
+
+menuentry "SplitDisk" {
+    search --no-floppy --file /boot/vmlinuz --set=root
+    linux /boot/vmlinuz console=ttyS0,115200n8 earlyprintk=serial,ttyS0,115200 rdinit=/init
     initrd /boot/initramfs.img
 }
 "#;
@@ -28,7 +51,24 @@ pub fn format_and_populate<D>(
 where
     D: Read + Write + Seek,
 {
-    // Volume ID: first 4 bytes of a derived GUID (stable for reproducibility).
+    format_and_populate_with_grub_cfg(
+        device, size, drive_uuid, grub_efi, kernel, initramfs, GRUB_CFG,
+    )
+}
+
+/// Like [`format_and_populate`], but writes an explicit `grub.cfg` body.
+pub fn format_and_populate_with_grub_cfg<D>(
+    device: &mut D,
+    size: u64,
+    drive_uuid: &[u8; DRIVE_UUID_LEN],
+    grub_efi: &[u8],
+    kernel: &[u8],
+    initramfs: &[u8],
+    grub_cfg: &str,
+) -> Result<()>
+where
+    D: Read + Write + Seek,
+{
     let vol_guid = derive_guid(drive_uuid, "splitdisk-fat-volume-id-v1");
     let vol_bytes = vol_guid.as_bytes();
     let volume_id = u32::from_le_bytes([vol_bytes[0], vol_bytes[1], vol_bytes[2], vol_bytes[3]]);
@@ -106,7 +146,7 @@ where
             let mut f = grub_dir
                 .create_file("grub.cfg")
                 .map_err(|e| Error::Format(format!("create grub.cfg: {e}")))?;
-            f.write_all(GRUB_CFG.as_bytes())
+            f.write_all(grub_cfg.as_bytes())
                 .map_err(|e| Error::Io(format!("write grub.cfg: {e}")))?;
             f.flush().map_err(|e| Error::Io(e.to_string()))?;
         }

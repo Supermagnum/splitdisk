@@ -95,17 +95,19 @@ fn initramfs_contains_spec_paths() {
     let init = splitdisk_image::vendor::synthetic_init_stub();
     let assemble = b"FAKE-ASSEMBLE-BIN-FOR-INITRAMFS-TEST";
     let ccid = BuiltBlob::load(BLOB_CCID_IFD).expect("ccid for initramfs test");
-    let gz = initramfs::build_initramfs(
-        &init,
-        assemble,
-        &[("usr/lib/pcsc/drivers/ifd-ccid.so", ccid.bytes())],
-    )
-    .unwrap();
+    let plist = splitdisk_image::vendor::load_ccid_info_plist()
+        .unwrap_or_else(|_| br#"<?xml version="1.0"?><plist><dict></dict></plist>"#.to_vec());
+    let bundle = splitdisk_image::initramfs::CcidBundle {
+        libccid_so: ccid.bytes().to_vec(),
+        info_plist: plist,
+    };
+    let gz = initramfs::build_initramfs(&init, assemble, &bundle, &[]).unwrap();
     let names = initramfs::list_cpio_names(&gz).unwrap();
     for expected in [
         "init",
         "usr/bin/splitdisk-assemble",
-        "usr/lib/pcsc/drivers/ifd-ccid.so",
+        "usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist",
+        "usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Linux/libccid.so",
         "dev",
         "proc",
         "sys",
@@ -135,12 +137,12 @@ fn two_runs_structurally_equivalent_with_fixed_drive_uuid() {
     let size = 64 * 1024 * 1024;
     let uuid = fixed_uuid();
     for out in [&a, &b] {
-        build_base_image(&ImageRequest {
-            output: out.clone(),
+        build_base_image(&ImageRequest::production(
+            out.clone(),
             size,
-            drive_uuid: uuid,
-            assemble_bin: assemble.clone(),
-        })
+            uuid,
+            assemble.clone(),
+        ))
         .unwrap();
     }
     let ba = std::fs::read(&a).unwrap();
@@ -181,12 +183,12 @@ fn gpt_and_partition_sizes_match_plan() {
     let size = 512 * 1024 * 1024;
     let layout = plan_partitions(size).unwrap();
     assert_eq!(layout.esp_size, ESP_SIZE_DEFAULT);
-    build_base_image(&ImageRequest {
-        output: img.clone(),
+    build_base_image(&ImageRequest::production(
+        img.clone(),
         size,
-        drive_uuid: fixed_uuid(),
-        assemble_bin: assemble,
-    })
+        fixed_uuid(),
+        assemble,
+    ))
     .unwrap();
 
     let (n, esp_sec, sys_sec) = gpt_layout::inspect_partitions(&img).unwrap();
@@ -201,12 +203,12 @@ fn fat_esp_readback_matches_written_blobs() {
     let img = dir.path().join("fat.img");
     let assemble = assemble_fixture();
     let size = 64 * 1024 * 1024;
-    build_base_image(&ImageRequest {
-        output: img.clone(),
+    build_base_image(&ImageRequest::production(
+        img.clone(),
         size,
-        drive_uuid: fixed_uuid(),
-        assemble_bin: assemble,
-    })
+        fixed_uuid(),
+        assemble,
+    ))
     .unwrap();
 
     let layout = plan_partitions(size).unwrap();
@@ -232,12 +234,12 @@ fn ext4_system_readback_has_assemble_and_share_dirs() {
     let assemble = assemble_fixture();
     let assemble_bytes = std::fs::read(&assemble).unwrap();
     let size = 64 * 1024 * 1024;
-    build_base_image(&ImageRequest {
-        output: img.clone(),
+    build_base_image(&ImageRequest::production(
+        img.clone(),
         size,
-        drive_uuid: fixed_uuid(),
-        assemble_bin: assemble,
-    })
+        fixed_uuid(),
+        assemble,
+    ))
     .unwrap();
 
     let layout = plan_partitions(size).unwrap();
@@ -326,12 +328,12 @@ fn ext4_partition_passes_fsck_ext4_readonly() {
     let img = dir.path().join("fsck.img");
     let assemble = assemble_fixture();
     let size = 64 * 1024 * 1024;
-    build_base_image(&ImageRequest {
-        output: img.clone(),
+    build_base_image(&ImageRequest::production(
+        img.clone(),
         size,
-        drive_uuid: fixed_uuid(),
-        assemble_bin: assemble,
-    })
+        fixed_uuid(),
+        assemble,
+    ))
     .unwrap();
 
     let layout = plan_partitions(size).unwrap();
