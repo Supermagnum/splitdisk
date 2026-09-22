@@ -403,30 +403,44 @@ metadata fixes (`scripts/build-vendor-blobs.sh`, `scripts/compare-blob-determini
 
 | Component | Fixes tried | Result in this image |
 |-----------|-------------|----------------------|
-| **Linux bzImage** | Per-commit `SOURCE_DATE_EPOCH`; `KBUILD_BUILD_USER/HOST=splitdisk`; `KBUILD_BUILD_TIMESTAMP` from commit author date | **Byte-identical** across two cold `O=` builds. UTS string stable, e.g. `6.12.111 (splitdisk@splitdisk) … Mon Sep 21 13:02:51 UTC 2026`. CI runs `scripts/verify-kernel-repro.sh`. |
-| **GRUB BOOTX64.EFI** | Per-commit `SOURCE_DATE_EPOCH`; `-ffile-prefix-map` for grub/gnulib/build trees | **Still differs** (same size; byte differences late in the image — likely PE/EFI packaging or timestamps in the standalone image). |
-| **CCID libccid.so** | Per-commit `SOURCE_DATE_EPOCH`; `LDFLAGS=-Wl,--build-id=none` | **Still differs** (same size; early file offsets — link/metadata variance). |
+| **Linux bzImage** | Per-commit `SOURCE_DATE_EPOCH`; `KBUILD_BUILD_USER/HOST=splitdisk`; `KBUILD_BUILD_TIMESTAMP` from commit author date | **Byte-identical** across two cold `O=` builds. UTS string stable. CI: `scripts/verify-kernel-repro.sh`. |
+| **GRUB BOOTX64.EFI** | Per-commit `SOURCE_DATE_EPOCH`; `-ffile-prefix-map` for grub/gnulib/build trees | **Still differs** between some cold rebuilds (PE/EFI packaging). Output pin remains a cache-match check. |
+| **CCID libccid.so** | Initially: `SOURCE_DATE_EPOCH` + env `LDFLAGS=-Wl,--build-id=none` | **Still differed** — see fresh-clone failure below. |
+
+### Fresh-clone failure and CCID root cause (same day)
+
+A clean `git clone` + verified `vendor/` + cold `scripts/test.sh` failed
+`BuiltBlob` pin checks on **CCID only**. `strings` on the two `.so` files showed
+different `__FILE__` path fragments:
+
+- suite mounted at `/src` → `../../../src/vendor/ccid/src/...`
+- suite mounted at `/work` → `../../../work/vendor/ccid/src/...`
+
+So the hard pin was asserting bind-mount location, not source identity.
+
+**Causes checked:**
+
+| Cause | Finding |
+|-------|---------|
+| Absolute / mount-relative paths in binary | **Identified** — `__FILE__` / debug strings. Fixed by rsyncing sources to `/tmp/splitdisk-ccid-src`, building in `/tmp/splitdisk-ccid-build`, Meson `-Dc_args=-ffile-prefix-map…/-fdebug-prefix-map…`. |
+| `.note.gnu.build-id` | Env `LDFLAGS` alone was unreliable; Meson `-Dc_link_args=-Wl,--build-id=none` applied. `readelf -n` shows no build-id note after the fix. |
+| `__DATE__` / `__TIME__` in `vendor/ccid` | **Ruled out** (none in non-MacOSX sources). |
+| Parallel ninja job order | Experiment used `SPLITDISK_CCID_JOBS=1`; with path fix, two cold builds under `/work` vs `/src` mounts are **byte-identical**. |
+
+After the path fix, `PIN_CCID_IFD` is again a real byte-identity assertion for
+builds in this Docker image (updated digest). GRUB remains the open
+non-reproducible output among the three.
 
 ### Scope of any reproducibility claim
 
-Byte-identical kernel rebuilds are claimed **only** for the pinned Dockerfile
-apt toolchain on this image (`gcc=4:12.2.0-3`, binutils 2.40, etc.). That is
-**not** a guarantee on arbitrary hosts, compiler versions, or libc builds.
-
-GRUB and CCID: rely on checked-in BLAKE3 pins; cold rebuilds may change bytes
-without updating pins.
-
-### Options (unchanged)
-
-| Option | Notes |
-|--------|-------|
-| A. Accept pin-per-CI-image (current for GRUB/CCID) | Rebuild refreshes pins when intentional |
-| B. Investigate GRUB mkstandalone / CCID link further | Deferred; no `faketime` without decision |
+Byte-identical kernel and CCID rebuilds are claimed **only** for the pinned
+Dockerfile apt toolchain on this image. That is **not** a guarantee on
+arbitrary hosts, compiler versions, or libc builds.
 
 ### Status
 
-**Partially resolved:** kernel reproducible in-image; GRUB/CCID variance documented.
-Cross-host bit-identity remains open for those two components.
+**Mostly resolved for kernel + CCID in-image.** GRUB output bit-identity and
+true cross-host claims remain open.
 
 ---
 

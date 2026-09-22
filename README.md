@@ -45,8 +45,9 @@ Implemented in Rust (file-backed Phase 1 safety model):
 - **`/init` in the initramfs is still a synthetic stub** (not full mount/exec init)
 - **CCID/pcscd runtime config** may be incomplete (driver copied without full
   `meson install`; see [OPEN-QUESTIONS (k)](docs/OPEN-QUESTIONS.md))
-- **Reproducibility:** Linux bzImage is byte-stable across cold rebuilds in the
-  pinned Docker image; GRUB and CCID still vary — [OPEN-QUESTIONS (j)](docs/OPEN-QUESTIONS.md)
+- **Reproducibility:** Linux bzImage and CCID `.so` are byte-stable across cold
+  rebuilds in the pinned Docker image (canonical CCID build paths); GRUB EFI
+  output may still vary — [OPEN-QUESTIONS (j)](docs/OPEN-QUESTIONS.md)
 
 Do not treat this tree as audited or “secure” for real data until spec gaps are
 closed and independent review has occurred.

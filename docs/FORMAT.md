@@ -260,7 +260,7 @@ the human-verified trees under `vendor/` (see `docs/VENDORING.md`):
 |------|--------|-------|-----------|
 | `BOOTX64.EFI` | `vendor/grub` + `vendor/gnulib` | `bootstrap` / `configure --with-platform=efi` / `grub-mkstandalone` | `vendor-blobs/grub/<commit>/` |
 | `bzImage` | `vendor/linux` | `make O=… defconfig` + SPEC §10.5 `scripts/config` toggles / `bzImage` | `vendor-blobs/linux/<commit>/` |
-| `ifd-ccid.so` | `vendor/ccid` | Meson + Ninja compile (`-Dembedded=true`); copy `libccid.so` from the build dir (skip `meson install` — usbdropdir is under `/usr` and read-only in the test container) | `vendor-blobs/ccid/<commit>/` |
+| `ifd-ccid.so` | `vendor/ccid` | Meson + Ninja from canonical `/tmp/splitdisk-ccid-src` (`-Dembedded=true`, `-ffile-prefix-map`, `--build-id=none`); copy `libccid.so` from build dir (skip `meson install` — usbdropdir under `/usr` is read-only in the test container) | `vendor-blobs/ccid/<commit>/` |
 
 Entry point: `scripts/build-vendor-blobs.sh` (invoked by
 `scripts/docker-test-inner.sh` before `cargo test`). Artifacts land under
@@ -273,18 +273,22 @@ Phase 4 reference host roughly **~1 minute** GRUB and **~2 minutes** Linux
 Warm cache: seconds (copy/load only).
 
 **Reproducibility of blob bytes:** builds use per-tree `SOURCE_DATE_EPOCH`
-(git author date of the vendored commit). The Linux bzImage additionally sets
-`KBUILD_BUILD_USER=splitdisk`, `KBUILD_BUILD_HOST=splitdisk`, and
-`KBUILD_BUILD_TIMESTAMP` from that epoch; two cold builds in the same Docker
-image are **byte-identical** (checked by `scripts/verify-kernel-repro.sh` in
-the test suite). GRUB uses `-ffile-prefix-map=…` for the src/build trees;
-**GRUB EFI and CCID `.so` still differ between cold rebuilds** in this image
-(same size, differing bytes — likely PE/EFI packaging and link metadata).
-BLAKE3 pins therefore remain the gate for those components.
+(git author date of the vendored commit).
+
+- **Linux bzImage:** `KBUILD_BUILD_USER/HOST=splitdisk` and
+  `KBUILD_BUILD_TIMESTAMP` from that epoch; two cold builds in the same Docker
+  image are **byte-identical** (`scripts/verify-kernel-repro.sh`).
+- **CCID `libccid.so`:** sources are copied to fixed `/tmp/splitdisk-ccid-src`
+  and built with Meson `-Dc_args=-ffile-prefix-map…` /
+  `-Dc_link_args=-Wl,--build-id=none` so bind-mount names (`/src` vs `/work`)
+  do not leak via `__FILE__`. Two cold builds under different mount points in
+  this image are **byte-identical**.
+- **GRUB EFI:** `-ffile-prefix-map` is applied; **output may still differ**
+  between cold rebuilds. The checked-in BLAKE3 pin matches a known-good cache
+  entry but is not a cross-rebuild guarantee.
 
 Reproducibility is claimed **only relative to the pinned Dockerfile/apt
-toolchain** (`gcc=4:12.2.0-3`, `meson=1.0.1-5`, `ninja-build=1.11.1-2~deb12u1`,
-etc.), not for arbitrary hosts or compiler versions. See OPEN-QUESTIONS (j).
+toolchain**, not for arbitrary hosts or compiler versions. See OPEN-QUESTIONS (j).
 
 `scripts/test.sh` uses a large `/tmp` tmpfs (default **48g**, override with
 `SPLITDISK_TMPFS_SIZE`) so the kernel tree + object files fit. That is a
