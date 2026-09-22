@@ -14,6 +14,7 @@ pub mod size;
 pub mod vendor;
 
 use crate::error::{Error, Result};
+use crate::initramfs::CcidBundle;
 use crate::vendor::{BuiltBlob, VendoredBlob, BLOB_CCID_IFD, BLOB_GRUB_EFI, BLOB_KERNEL};
 use splitdisk_core::DRIVE_UUID_LEN;
 use std::fs::{File, OpenOptions};
@@ -41,6 +42,34 @@ pub struct ImageRequest {
     pub drive_uuid: [u8; DRIVE_UUID_LEN],
     /// Path to a built `splitdisk-assemble` binary (embedded in initramfs + ext4).
     pub assemble_bin: PathBuf,
+    /// When true, write [`fat_esp::GRUB_CFG_TEST_SERIAL`] (serial console) instead
+    /// of production quiet [`fat_esp::GRUB_CFG`]. For Phase 5 QEMU tests only.
+    pub test_serial_console: bool,
+    /// Optional GRUB EFI bytes (e.g. test-only mkstandalone with serial cfg).
+    /// When `None`, load the pinned production blob.
+    pub grub_efi_override: Option<Vec<u8>>,
+    /// Optional `/init` bytes. When `None`, use [`vendor::synthetic_init_stub`].
+    pub init_stub_override: Option<Vec<u8>>,
+}
+
+impl ImageRequest {
+    /// Production defaults: quiet GRUB, pinned blobs, Docker/image init stub.
+    pub fn production(
+        output: PathBuf,
+        size: u64,
+        drive_uuid: [u8; DRIVE_UUID_LEN],
+        assemble_bin: PathBuf,
+    ) -> Self {
+        Self {
+            output,
+            size,
+            drive_uuid,
+            assemble_bin,
+            test_serial_console: false,
+            grub_efi_override: None,
+            init_stub_override: None,
+        }
+    }
 }
 
 /// Partition byte ranges within the image file (absolute offsets).
@@ -114,16 +143,32 @@ pub fn build_base_image(req: &ImageRequest) -> Result<()> {
     }
 
     // Real Phase 4 blobs (BLAKE3-pinned; built by scripts/build-vendor-blobs.sh).
-    let grub = BuiltBlob::load(BLOB_GRUB_EFI)?;
+    let grub_owned;
+    let grub_bytes: &[u8] = if let Some(ref o) = req.grub_efi_override {
+        o.as_slice()
+    } else {
+        grub_owned = BuiltBlob::load(BLOB_GRUB_EFI)?;
+        grub_owned.bytes()
+    };
     let kernel = BuiltBlob::load(BLOB_KERNEL)?;
     let ccid = BuiltBlob::load(BLOB_CCID_IFD)?;
 
-    let init_stub = vendor::synthetic_init_stub();
-    let initramfs_bytes = initramfs::build_initramfs(
-        &init_stub,
-        &assemble_bytes,
-        &[("usr/lib/pcsc/drivers/ifd-ccid.so", ccid.bytes())],
-    )?;
+    let init_stub = match &req.init_stub_override {
+        Some(b) => b.clone(),
+        None => vendor::default_init_stub(),
+    };
+    let info_plist = vendor::load_ccid_info_plist()?;
+    let ccid_bundle = CcidBundle {
+        libccid_so: ccid.bytes().to_vec(),
+        info_plist,
+    };
+    let extra_owned = load_initramfs_extras()?;
+    let extra_refs: Vec<(&str, &[u8])> = extra_owned
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_slice()))
+        .collect();
+    let initramfs_bytes =
+        initramfs::build_initramfs(&init_stub, &assemble_bytes, &ccid_bundle, &extra_refs)?;
 
     // Create sparse-capable zero-filled file of exact size.
     {
@@ -139,16 +184,22 @@ pub fn build_base_image(req: &ImageRequest) -> Result<()> {
 
     gpt_layout::write_gpt(&req.output, req.size, &req.drive_uuid, layout)?;
 
-    // ESP (FAT32)
+    // ESP (FAT32 via fatfs; protective MBR is written in gpt_layout)
     {
         let mut part = partition_file(&req.output, layout.esp_offset, layout.esp_size)?;
-        fat_esp::format_and_populate(
+        let grub_cfg = if req.test_serial_console {
+            fat_esp::GRUB_CFG_TEST_SERIAL
+        } else {
+            fat_esp::GRUB_CFG
+        };
+        fat_esp::format_and_populate_with_grub_cfg(
             &mut part,
             layout.esp_size,
             &req.drive_uuid,
-            grub.bytes(),
+            grub_bytes,
             kernel.bytes(),
             &initramfs_bytes,
+            grub_cfg,
         )?;
         part.sync_all().map_err(|e| Error::Io(e.to_string()))?;
     }
@@ -179,6 +230,24 @@ pub fn build_base_image(req: &ImageRequest) -> Result<()> {
         .map_err(|e| Error::Io(e.to_string()))?;
     f.sync_all().map_err(|e| Error::Io(e.to_string()))?;
     Ok(())
+}
+
+fn load_initramfs_extras() -> Result<Vec<(String, Vec<u8>)>> {
+    let mut out = Vec::new();
+    // Optional overlay first: first-wins in the cpio builder, so a freshly
+    // staged tree (dereferenced libs) overrides a stale Docker-baked copy.
+    if let Ok(p) = std::env::var("SPLITDISK_INITRAMFS_EXTRA") {
+        let extra = Path::new(&p);
+        if extra.is_dir() {
+            out.extend(initramfs::collect_extra_tree(extra)?);
+        }
+    }
+    // Docker-baked pcscd + libs (Phase 6); fills paths the overlay omitted.
+    let pcsc = Path::new("/usr/local/share/splitdisk/pcsc-runtime");
+    if pcsc.is_dir() {
+        out.extend(initramfs::collect_extra_tree(pcsc)?);
+    }
+    Ok(out)
 }
 
 fn partition_file(path: &Path, offset: u64, size: u64) -> Result<PartitionView> {

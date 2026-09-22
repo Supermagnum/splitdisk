@@ -315,26 +315,30 @@ UUID scheme.
 ```
 
 `fatfs` is built **without** the `chrono` feature so file timestamps are fixed
-(reproducibility).
+(reproducibility). Phase 5 confirmed OVMF can mount this ESP **once a protective
+MBR is present** (OPEN-QUESTIONS (n)); earlier boot failures were MBR-related,
+not Fat-formatter-related.
 
 ### 11.3 initramfs (cpio newc + gzip via `cpio` + `flate2`)
 
 ```
-/init                              synthetic stub (banner + minimal ELF; no mount/exec yet)
-/usr/bin/splitdisk-assemble        real workspace binary
-/usr/lib/pcsc/drivers/ifd-ccid.so  real CCID IFD `.so` (Phase 4 Meson compile)
-/etc/reader.conf.d/                empty directory (placeholder only)
-/dev/ /proc/ /sys/ /tmp/           empty directories
+/init                         Rust splitdisk-init: mount /proc,/sys,tmpfs /tmp
+                              (+ /run), then execve splitdisk-assemble --agent
+/usr/bin/splitdisk-assemble   workspace binary (+ glibc/ld deps staged in)
+/usr/sbin/pcscd               staged from Debian pcscd (Phase 6)
+/usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist
+/usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Linux/libccid.so
+/etc/reader.conf.d/           empty (USB CCID needs no serial reader.conf)
+/dev/ /proc/ /sys/ /tmp/ /run/  mount points
 ```
 
-**CCID install gap (Phase 4+):** the blob build runs `meson compile` only and
-copies `libccid.so` into the initramfs path above. A full `meson install`
-into pcsclite’s `usbdropdir` was skipped because that path lives under `/usr`
-(read-only in the hardened test container). A normal install may also drop
-bundled `Info.plist` / reader metadata and other files pcscd consults at
-runtime. The initramfs therefore has the driver binary but may lack the
-pcscd/CCID configuration needed for a working smart-card stack — layout
-testing only until Phase 5+ (QEMU / initramfs policy). See OPEN-QUESTIONS (k).
+**pcscd ownership (SPEC §10.3):** `splitdisk-assemble --agent` starts
+`pcscd --foreground` as a subprocess after printing
+`SPLITDISK_ASSEMBLE_STARTED`. `/init` does not spawn pcscd.
+
+**CCID bundle (item (k) closed):** pcsclite loads IFDs from the bundle
+layout above. Flat `ifd-ccid.so` alone is not sufficient. `Info.plist` is
+copied from the Meson build dir (no full `meson install` into `/usr`).
 
 Gzip mtime is forced to 0. Cpio entry mtimes are fixed at `1000000000`.
 
@@ -392,3 +396,211 @@ identity plus structural equivalence of the system partition.
 BLAKE3 pins for real blobs (checked into `vendor.rs`): `grub_efi`,
 `kernel_bzimage`, `ccid_ifd_ccid_so`. Trust chain for the *source* trees is
 `docs/VENDORING.md`; pins catch accidental binary swaps after build.
+
+---
+
+## 12. Phase 5 QEMU boot-chain testing
+
+SPEC §§6 and §10 describe an **EFI** boot path (GPT + ESP with
+`BOOTX64.EFI`, kernel, initramfs). Phase 5 therefore installs **OVMF**
+(UEFI firmware) alongside `qemu-system-x86` in the Docker test image
+(pinned apt versions; network only at image build time). BIOS/SeaBIOS is
+not used — it would not exercise the shipped GRUB EFI layout.
+
+### 12.1 Why UEFI firmware is required
+
+The base image ESP contains a GRUB **x86_64-efi** standalone image at
+`/EFI/BOOT/BOOTX64.EFI`. That binary is loaded by UEFI firmware, not by
+legacy BIOS. QEMU must be started with OVMF `CODE`/`VARS` pflash images so
+the guest firmware finds and executes the ESP bootloader the same way a
+real UEFI machine would.
+
+### 12.2 Test-only serial console (does not ship in production)
+
+Production `grub.cfg` and the embedded config inside production
+`BOOTX64.EFI` keep SPEC §10.4 quiet cmdline (`quiet loglevel=0 …`).
+
+`BOOTX64-TEST-SERIAL.EFI` is **not** a separate GRUB build or fork. It is
+produced by the **same** `scripts/build-vendor-blobs.sh` GRUB pipeline from
+the same `vendor/grub` (+ gnulib) tree and the same `grub-mkstandalone`
+install prefix as production `BOOTX64.EFI`. The only differences are the
+embedded grub.cfg (serial / `console=ttyS0` / `rdinit=/init`) and the
+extra `serial` module on the mkstandalone module list. Both artifacts land
+side-by-side under `…/grub/<COMMIT_GRUB>/`.
+
+QEMU smoke tests need serial boot evidence. That is achieved **only** by:
+
+1. Loading `BOOTX64-TEST-SERIAL.EFI` via `ImageRequest::grub_efi_override`
+   (helper bin `mk-qemu-boot-image` only).
+2. Writing `GRUB_CFG_TEST_SERIAL` to the ESP via
+   `ImageRequest::test_serial_console` (same helper).
+
+**Excluded from production / pins:**
+
+- `PIN_GRUB_EFI` digests **only** quiet `BOOTX64.EFI` (`BLOB_GRUB_EFI`).
+  `BOOTX64-TEST-SERIAL.EFI` is never hashed into that pin.
+- `ImageRequest::production` sets `test_serial_console: false` and
+  `grub_efi_override: None`, so the CLI `splitdisk-image` path and all
+  layout tests write production `BOOTX64.EFI` + quiet `GRUB_CFG` only.
+  Nothing in the non-test image builder selects the test-serial EFI.
+
+### 12.3 Harness
+
+`scripts/qemu-boot-chain.sh` (invoked from `docker-test-inner.sh` when
+`vendor/` is present):
+
+- File-backed USB mass storage (`usb-storage` on `qemu-xhci`), `-nic none`,
+  `-display none`, serial to a log file, QMP for hot-plug / reset.
+- Asserts serial log contains kernel boot evidence and
+  `SPLITDISK_INIT_REACHED` from the static `/init` stub.
+- Demonstrates QMP `device_add`/`device_del` of a second usb-storage drive.
+- `system_reset` + fresh QEMU against the same image (limited value while
+  `/init` does not write the image — see OPEN-QUESTIONS (l)).
+
+### 12.4 Resource / timing expectations
+
+| Mode | When | Cold boot to `/init` marker (measured) |
+|------|------|----------------------------------------|
+| KVM (`-enable-kvm`, `/dev/kvm` into the container) | Host has KVM | **~6s** wall (Phase 5 laptop run) |
+| TCG (`-accel tcg`, forced via `SPLITDISK_QEMU_ACCEL=tcg`) | Same host, no KVM | **~6s** wall (Phase 5 follow-up; guest timestamps ~2× KVM for early boot, OVMF+poll dominate wall) |
+
+Earlier Phase 5 docs guessed “1–3+ minutes” for TCG; that was an **unmeasured estimate** and is **wrong for this workload on this host**. Timeout default remains 180s as a safety net for slower CI CPUs. Force TCG with `SPLITDISK_QEMU_ACCEL=tcg` (harness does not pass `/dev/kvm` when measuring TCG).
+
+`scripts/test.sh` passes `--device /dev/kvm` when the host node exists;
+otherwise the guest runs under TCG. With either accel, the Phase 5 QEMU
+section (cold + hot-plug + reset + fresh) is typically under a minute on
+a similar machine; CI time is still dominated by Phase 4 vendor blob builds.
+
+### 12.5 Initramfs cpio modes (Phase 5 fix)
+
+newc file entries must include `S_IFREG` (`0o100755` / `0o100644`), not
+permission bits alone. Without the file-type bit, Linux’s initramfs unpacker
+does not create a regular `/init`, and the kernel panics mounting a real root
+instead of running the stub.
+
+Kernel Phase 5 config additions (still SPEC §10.5 base +): `CONFIG_SERIAL_8250`,
+`CONFIG_SERIAL_8250_CONSOLE`, `CONFIG_SERIAL_CONSOLE`, `CONFIG_DEVTMPFS`,
+`CONFIG_DEVTMPFS_MOUNT` so test-only `console=ttyS0` works.
+
+---
+
+## 13. Phase 6: real `/init`, pcscd, GnuPG/vpcd validation
+
+### 13.1 `/init` sequence
+
+1. Print `SPLITDISK_INIT_STARTING`.
+2. Mount `proc` on `/proc`, `sysfs` on `/sys`, `tmpfs` on `/tmp` and `/run`.
+3. On failure: greppable `SPLITDISK_INIT_FAIL_MOUNT_*` / `SPLITDISK_INIT_FAIL_MOUNTS`, then idle (no kernel panic).
+4. Print `SPLITDISK_INIT_MOUNTS_OK`, then `execve("/usr/bin/splitdisk-assemble", ["--agent"])`.
+5. On exec failure: `SPLITDISK_INIT_FAIL_EXEC`, then idle.
+
+### 13.2 Assemble agent + pcscd
+
+`splitdisk-assemble --agent` prints `SPLITDISK_ASSEMBLE_STARTED`, checks for
+`ifd-ccid.bundle`, starts `pcscd --foreground`, prints
+`SPLITDISK_PCSCD_STARTED` (or `SPLITDISK_PCSCD_FAIL_*`), then idles.
+Interactive multi-drive PIN/reconstruction is **deferred to Phase 7**.
+
+### 13.3 GnuPG + vsmartcard (container)
+
+`scripts/pcsc-gpg-vpcd-test.sh` runs **in the Docker test container** (not
+inside QEMU):
+
+`gpg --card-status` → scdaemon → pcscd → **ifd-vpcd** (Debian reader.conf)
+
+Debian bookworm’s `vsmartcard-vpcd` ships the IFD and reader.conf but **not**
+the `vpcd` TCP daemon, so a live virtual-card ATR is not available from
+distro packages alone. The test therefore asserts: CCID bundle inputs present,
+pcscd starts with the vpcd IFD configured, and gpg can IPC to pcscd (failure
+mode is “no card”, not “pcscd unreachable”). That is real third-party PC/SC
+client evidence. USB `ifd-ccid.bundle` is a different IFD (USB CCID protocol);
+claiming gpg→CCID.so→vpcd would be false.
+
+QEMU separately proves `/init` → `splitdisk-assemble --agent` → pcscd with
+the CCID bundle present (`SPLITDISK_PCSCD_CCID_BUNDLE_OK`). Embedding GnuPG in
+the initramfs was not done.
+
+**Initramfs glibc staging:** `scripts/stage-initramfs-runtime.sh` copies
+`pcscd` and assemble `ldd` dependencies with `cp -aL` (dereference). Plain
+`cp -a` left soname symlinks without their ELF targets, so `execve` of
+assemble failed with `ENOENT` (missing interpreter / libs). Docker bakes the
+tree at `/usr/local/share/splitdisk/pcsc-runtime`; QEMU/tests may overlay via
+`SPLITDISK_INITRAMFS_EXTRA` (overlay wins on path collision).
+
+**Production BLAKE3 pins:** the `cp -aL` staging path and
+`SPLITDISK_INITRAMFS_EXTRA` overlay do **not** touch `PIN_CCID_IFD`,
+`PIN_KERNEL`, or `PIN_GRUB_EFI`. Those pins cover vendor blobs under
+`testdata/vendor-blobs/` (GRUB EFI, kernel bzImage, `ifd-ccid.so`). Staged
+glibc/pcscd bits are runtime initramfs extras (like Phase 5’s
+`BOOTX64-TEST-SERIAL.EFI` exclusion): they affect the bootable test image’s
+initramfs contents but are not production pin identities.
+
+### 13.4 Live ATR via built ifd-vpcd + vicc (Phase 6 follow-up)
+
+Debian bookworm’s `vsmartcard-vpcd` package is the **IFD** (`libifdvpcd.so`),
+not a missing TCP daemon. Upstream has no standalone `vpcd` daemon binary:
+`src/vpcd/` builds `libvpcd` (socket helpers linked into ifd-vpcd); the IFD
+listens on **127.0.0.1:35963** (and 35964); `vicc` connects as the virtual
+card. Transport stays on loopback and works under `--network none`.
+
+Debian’s `python3-virtualsmartcard` / `vicc` layout is broken on Python 3.11
+(module path + legacy imports), so the test image builds
+**frankmorgner/vsmartcard tag `virtualsmartcard-0.10`**
+(tarball SHA-256 `76897e4506e03b399a1dd394295d29621911b399d66a31acb5eb6b65131c726e`)
+via `scripts/build-vsmartcard-test.sh` into
+`/usr/local/share/splitdisk/vsmartcard-test/`. This is **test tooling only**:
+not embedded in the production initramfs, not covered by production BLAKE3
+pins (`PIN_CCID_IFD` / `PIN_KERNEL` / `PIN_GRUB_EFI`). No signature-
+verification bar (unlike vendor GRUB/kernel/CCID) because it never ships.
+
+`scripts/pcsc-gpg-vpcd-test.sh` starts pcscd with a private `reader.conf`
+whose `LIBPATH` is **our** built `libifdvpcd.so`, starts
+`vicc -t handler_test`, then fetches the ATR via PC/SC `SCardGetAttrib`.
+Measured ATR (hex):
+
+`3bd6180080b1806d1f038051006110309e`
+
+(pcscd verbose: `Card ATR: 3B D6 18 00 80 B1 80 6D 1F 03 80 51 00 61 10 30 9E`).
+pcscd logs show `Attempting startup … using …/vsmartcard-test/lib/libifdvpcd.so`
+and `Got ATR (17 bytes)` from ifd-vpcd — not Debian’s IFD and not USB
+`ifd-ccid.so`.
+
+**Explicit non-claim:** SplitDisk’s production USB `ifd-ccid.bundle`
+(`PIN_CCID_IFD`) is a different IFD protocol (USB CCID). It cannot speak to
+vpcd/vicc. Proving that `.so` still needs a USB CCID device (physical or
+QEMU `usb-ccid`); see OPEN-QUESTIONS (l).
+
+`gpg --card-status` against `handler_test` still reports “OpenPGP card not
+available” because the emulator is not an OpenPGP applet — that is expected;
+the PC/SC ATR path is the proof requested here.
+
+### 13.5 QEMU `usb-ccid` vs production `ifd-ccid.so` (follow-up)
+
+Pinned QEMU 7.2 (`qemu-system-x86` in the Dockerfile) **includes**
+`usb-ccid`, `ccid-card-emulated`, and `ccid-card-passthru` — no rebuild.
+Probe script: `scripts/qemu-usb-ccid-atr.sh` (optional; not part of the
+default green suite while ATR remains failing).
+
+Observed on the Phase 6 boot guest:
+
+1. Kernel enumerates `QEMU USB CCID` (`08e6:4433`).
+2. pcscd loads **production**
+   `…/ifd-ccid.bundle/Contents/Linux/libccid.so` (BLAKE3-pinned IFD).
+3. Reader match: “Gemalto Gemplus USB SmartCard Reader 433-Swap”.
+4. Then `Open Port … Failed` / `init failed` — **no ATR**.
+
+Host `ccid-card-emulated` (certificates backend + NSS test DB) does insert
+a virtual card. The remaining break is the guest IFD opening the emulated
+USB CCID channel. Documented in OPEN-QUESTIONS (l) as an accepted
+limitation pending quirk/stack work or physical hardware.
+
+### 13.6 Production vs test writability (`/run`)
+
+Production `/init` already mounts a tmpfs on `/run` (and creates
+`/run/pcscd`) so assemble can start pcscd. That is a **runtime** tmpfs inside
+the initramfs guest, not a change to the read-mostly GPT/ESP image layout
+from Phase 3. The `--tmpfs /run` flag in `scripts/test.sh` is **only** for
+the hardened Docker test harness (non-root host-side pcscd in the container);
+it does not alter production image contents.
+
+Galdralag remains untested (OPEN-QUESTIONS (o)).

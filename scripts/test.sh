@@ -10,13 +10,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 ENGINE="${CONTAINER_ENGINE:-docker}"
-IMAGE_NAME="${SPLITDISK_IMAGE:-splitdisk-test:phase4}"
+IMAGE_NAME="${SPLITDISK_IMAGE:-splitdisk-test:phase6}"
 TESTDATA_HOST="${ROOT}/testdata"
 mkdir -p "${TESTDATA_HOST}"
 
 # Kernel + GRUB object trees need far more than the Phase 3 2 GiB /tmp.
 # This is a resource limit only (OPEN-QUESTIONS (i)), not a security change:
-# still --network none, --read-only root, --cap-drop ALL, no devices.
+# still --network none, --read-only root, --cap-drop ALL; /dev/kvm optional for QEMU.
 TMPFS_SIZE="${SPLITDISK_TMPFS_SIZE:-48g}"
 
 USERNS_ARGS=()
@@ -25,6 +25,12 @@ if [[ "${ENGINE}" == *podman* ]]; then
   # Rootless podman: map container uid to host so testdata/lock writes work.
   USERNS_ARGS=(--userns=keep-id)
   USER_ARGS=()
+fi
+
+# Optional KVM passthrough for faster QEMU (TCG fallback if absent).
+KVM_ARGS=()
+if [[ -e /dev/kvm ]]; then
+  KVM_ARGS=(--device /dev/kvm)
 fi
 
 echo "Building image ${IMAGE_NAME} with ${ENGINE}..."
@@ -36,10 +42,12 @@ echo "Running tests (network none, read-only, cap-drop ALL, tmpfs ${TMPFS_SIZE})
   --network none \
   --read-only \
   --tmpfs "/tmp:rw,exec,nosuid,nodev,size=${TMPFS_SIZE}" \
+  --tmpfs "/run:rw,nosuid,nodev,size=64m,mode=1777" \
   --cap-drop ALL \
   --security-opt no-new-privileges \
   "${USERNS_ARGS[@]}" \
   "${USER_ARGS[@]}" \
+  "${KVM_ARGS[@]}" \
   -v "${ROOT}:/work:ro" \
   -v "${TESTDATA_HOST}:/work/testdata:rw" \
   -e CARGO_HOME=/home/builder/.cargo \

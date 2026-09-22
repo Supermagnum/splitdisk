@@ -288,7 +288,8 @@ FAT / ext4 / initramfs layout could be tested without network fetches.
 ### Status
 
 **Resolved** for source identity + offline blob production. Historical Phase 3
-placeholder approach retained above for audit context.
+placeholder approach retained above for audit context. Phase 5 boot-chain
+results are recorded under OPEN-QUESTIONS (l).
 
 ---
 
@@ -444,32 +445,128 @@ true cross-host claims remain open.
 
 ---
 
-## (k) CCID: skipped `meson install` and pcscd runtime configuration
+## (k) CCID: skipped `meson install` — RESOLVED (Phase 6 minimum fix)
 
-### What Phase 4 did
+### What was wrong
 
-CCID is built with Meson/Ninja (`-Dembedded=true`) and the `libccid.so` artifact
-is copied from the ninja build directory into the initramfs at
-`usr/lib/pcsc/drivers/ifd-ccid.so`.
+Phase 4 copied a flat `usr/lib/pcsc/drivers/ifd-ccid.so`. pcsclite discovers
+USB IFDs as **bundles**:
 
-### Why install was skipped
+`usbdropdir/ifd-ccid.bundle/Contents/Info.plist` + `…/Linux/libccid.so`
 
-`meson install` targets pcsclite’s `usbdropdir` (typically under
-`/usr/lib/pcsc/drivers/…`), which is not writable in the hardened,
-read-only-root test container. Install was replaced by copying the linked
-`.so` only.
+Without `Info.plist`, pcscd never loads the driver. Full `meson install` was
+skipped because `usbdropdir` under `/usr` is not writable in the hardened
+test container — that gap was real, not cosmetic.
 
-### Gap
+### Phase 6 fix (minimum)
 
-A full install may also place bundle metadata (e.g. `Info.plist`), serial
-driver stubs, and paths that **pcscd** and reader configuration expect.
-The initramfs currently has an empty `etc/reader.conf.d/` placeholder and
-may not include whatever CCID/pcscd need to load the IFD driver correctly
-at runtime. Phase 4 validates **presence and layout** of the binary, not a
-working smart-card stack.
+1. After `meson compile`, copy the generated `Info.plist` next to
+   `ifd-ccid.so` in the blob cache (`scripts/build-vendor-blobs.sh`).
+2. Pack the initramfs with the bundle layout above (not a flat `.so`).
+3. Stage Debian `pcscd` + `ldd` deps into `/usr/local/share/splitdisk/pcsc-runtime`
+   at Docker image build time with **dereferenced** copies (`cp -aL`); embed
+   that tree in the initramfs. (A first attempt used `cp -a` and left dangling
+   soname symlinks; the guest then failed `execve` with `ENOENT`.)
+4. `splitdisk-assemble --agent` starts `pcscd --foreground` as a subprocess
+   (SPEC §10.3 preferred ownership).
+
+Serial IFD / `reader.conf` twin stubs from a full install are still not
+bundled; they are not required for USB CCID hotplug. `etc/reader.conf.d/`
+remains for optional serial readers.
+
+### Investigation result
+
+The meson-install gap **did** block driver discovery until Info.plist +
+bundle layout were added. After that, pcscd loads `ifd-ccid.bundle` in the
+QEMU guest (`SPLITDISK_PCSCD_CCID_BUNDLE_OK`). No further meson-install
+equivalence was required for USB CCID.
+### Status
+
+**Resolved for USB CCID bundle load + pcscd start.** Full meson-install
+equivalence is unnecessary for the USB path. GnuPG→vpcd validation uses the
+separate `ifd-vpcd` IFD (see (o)); it does not exercise USB CCID protocol.
+
+---
+
+## (l) Phase 5 proved the boot chain; Phase 6 wires `/init` + pcscd
+
+### What Phase 5 proved
+
+- QEMU + OVMF can boot a `splitdisk-image` GPT/ESP disk attached as USB
+  mass storage with `-nic none`.
+- GRUB EFI hands off to the Phase 4 kernel; the kernel unpacks the
+  initramfs; a Phase 5 `/init` stub printed `SPLITDISK_INIT_REACHED`.
+
+### What Phase 6 added
+
+- Real Rust `/init` mounts `/proc`, `/sys`, tmpfs `/tmp` (and `/run`), then
+  `execve`s `splitdisk-assemble --agent`.
+- Assemble prints `SPLITDISK_ASSEMBLE_STARTED`, starts pcscd, prints
+  `SPLITDISK_PCSCD_STARTED` (or a greppable fail marker).
+- CCID bundle layout + Info.plist (see (k)).
+- Container-level GnuPG + vsmartcard vpcd functional PC/SC test.
+
+### What remains unproven / deferred
+
+- Multi-drive insertion, PIN entry TUI, and RS reconstruction in QEMU
+  (needs QMP-driven interactive scripting — **Phase 7**).
+- Galdralag / ClassicalKem hardware or firmware emulator (see (o)).
+- **USB `ifd-ccid.so` ATR over QEMU `usb-ccid`:** the pinned Debian QEMU
+  7.2 package **does** include `-device usb-ccid` and
+  `-device ccid-card-emulated` (no QEMU rebuild required). A probe
+  (`scripts/qemu-usb-ccid-atr.sh`) attached an emulated CCID reader
+  (`idVendor=08e6`, `idProduct=4433`, “QEMU USB CCID”) to the Phase 6
+  boot VM. Guest serial shows pcscd selecting the **production**
+  BLAKE3-pinned bundle path
+  `/usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Linux/libccid.so`
+  for “Gemalto Gemplus USB SmartCard Reader 433-Swap”, then
+  `Open Port … Failed` / `init failed` — **no ATR**. Host-side
+  `ccid-card-emulated` does insert a virtual card. So: USB enumeration +
+  production driver selection are proven; the IFD↔emulated-reader
+  channel open / ATR step is still broken in this environment.
+  Closing that last hop needs either a libccid/QEMU quirk fix, more
+  initramfs USB stack work, or physical CCID hardware — **accepted,
+  documented limitation** (not a silent pass).
 
 ### Status
 
-**Open (Phase 5+):** define initramfs pcscd/CCID config generation and whether
-to mimic install-tree layout offline into the cpio archive. Not fixed in the
-determinism/README pass.
+**Boot + assemble agent + pcscd start: Phase 6.** Live ATR through built
+ifd-vpcd + vicc: Phase 6 follow-up. QEMU usb-ccid available; production
+ifd-ccid.so loads against it but Open Port/ATR still fails. Full USB
+assemble workflow and Galdralag: still open.
+
+---
+
+## (o) Galdralag / hardware token testing — known limitation
+
+**No Galdralag hardware and no Baochip firmware emulator are available in
+this project’s CI or developer containers.** ClassicalKem remains the
+documented stub returning `Error::KemNotAvailable`. Phase 6 does **not**
+fake Galdralag-shaped behaviour.
+
+Closing this item requires physical tokens or a reviewed firmware emulator.
+Until then, treat Galdralag paths as **untested** — an honest gap, not a
+silent pass.
+
+---
+
+## (n) Protective MBR was missing from GPT images — RESOLVED (Phase 5)
+
+### What happened
+
+The `gpt` crate’s `Disk::write()` writes the GPT header and partition array but
+**does not** write LBA0. Phase 3/4 images therefore lacked a protective MBR
+(`0x55AA` + type `0xEE`). Offline GPT/FAT inspection still worked; OVMF treated
+the USB/AHCI disk as a single `BLK0` with no `FS0:` and BdsDxe returned
+`Not Found` when booting.
+
+### Resolution
+
+After `disk.write()`, call `gpt::mbr::ProtectiveMBR::with_lb_size(...).overwrite_lba0(...)`
+(as the crate’s own tests document).
+
+### Status
+
+**Resolved in Phase 5.** Early Phase 5 investigation briefly blamed the `fatfs`
+ESP writer (and tried `mkfs.vfat`); that path was reverted once the MBR gap was
+identified. Keep `fatfs` as the ESP writer.

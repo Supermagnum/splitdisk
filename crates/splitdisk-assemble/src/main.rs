@@ -1,47 +1,59 @@
 #![forbid(unsafe_code)]
-//! `splitdisk-assemble` CLI — Phase 2 file-backed assembly.
-//!
-//! Pause / cool-down test hooks are **not** CLI flags. Use the `test-hooks`
-//! feature and library APIs from tests only.
+//! `splitdisk-assemble` CLI — file-backed assembly or initramfs `--agent` mode.
 
 use clap::Parser;
-use splitdisk_assemble::{assemble, AssembleParams};
+use splitdisk_assemble::{assemble, pcscd, AssembleParams};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "splitdisk-assemble",
-    about = "SplitDisk assembly (Phase 2 file carriers)"
+    about = "SplitDisk assembly agent (file carriers or initramfs --agent)"
 )]
 struct Args {
-    /// Comma-separated carrier file paths (at least k).
+    /// Initramfs agent mode: start pcscd, emit serial markers, idle.
+    /// Used by `/init` after mounts (SPEC §10.3). No Galdralag / TUI yet.
     #[arg(long)]
-    carriers: String,
+    agent: bool,
+
+    /// Comma-separated carrier file paths (at least k).
+    #[arg(long, required_unless_present = "agent")]
+    carriers: Option<String>,
 
     /// Comma-separated PINs matching carriers.
-    #[arg(long)]
-    pins: String,
+    #[arg(long, required_unless_present = "agent")]
+    pins: Option<String>,
 
     /// Output plaintext path.
-    #[arg(long)]
-    output: PathBuf,
+    #[arg(long, required_unless_present = "agent")]
+    output: Option<PathBuf>,
 
     /// Checkpoint / journal directory.
-    #[arg(long)]
-    checkpoint_dir: PathBuf,
+    #[arg(long, required_unless_present = "agent")]
+    checkpoint_dir: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
+    if args.agent {
+        return run_agent();
+    }
+
     let carriers: Vec<PathBuf> = args
         .carriers
+        .as_ref()
+        .unwrap()
         .split(',')
         .map(|s| PathBuf::from(s.trim()))
         .filter(|p| !p.as_os_str().is_empty())
         .collect();
     let pins: Vec<String> = args
         .pins
+        .as_ref()
+        .unwrap()
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -50,8 +62,8 @@ fn main() -> ExitCode {
     let params = AssembleParams {
         carriers,
         pins,
-        output: args.output,
-        checkpoint_dir: args.checkpoint_dir,
+        output: args.output.unwrap(),
+        checkpoint_dir: args.checkpoint_dir.unwrap(),
         mock_cooldown: false,
         #[cfg(feature = "test-hooks")]
         test_pause_after_bytes: None,
@@ -65,6 +77,32 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("Assembly failed: {e}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_agent() -> ExitCode {
+    // Greppable proof that /init actually exec'd this binary (not the Phase 5 stub).
+    eprintln!("SPLITDISK_ASSEMBLE_STARTED");
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+
+    match pcscd::start_pcscd() {
+        Ok(_child) => {
+            // Keep agent (and pcscd child) alive for QEMU observation.
+            // Multi-drive PIN/TUI reconstruction is deferred (Phase 7+).
+            eprintln!("SPLITDISK_AGENT_IDLE");
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+            loop {
+                thread::sleep(Duration::from_secs(3600));
+            }
+        }
+        Err(_) => {
+            // Stay up so serial logs remain readable; do not kernel-panic.
+            eprintln!("SPLITDISK_AGENT_IDLE_WITHOUT_PCSCD");
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+            loop {
+                thread::sleep(Duration::from_secs(3600));
+            }
         }
     }
 }

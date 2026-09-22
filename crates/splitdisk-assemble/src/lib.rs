@@ -2,6 +2,7 @@
 //! Assembly: unlock carriers, reconstruct, decrypt with checkpoint journal.
 
 mod journal;
+pub mod pcscd;
 
 use journal::{JournalState, JOURNAL_NAME};
 use splitdisk_auth::{

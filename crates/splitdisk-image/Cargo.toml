@@ -14,6 +14,14 @@ path = "src/main.rs"
 name = "record-blob-pins"
 path = "src/bin/record-blob-pins.rs"
 
+[[bin]]
+name = "mk-qemu-boot-image"
+path = "src/bin/mk-qemu-boot-image.rs"
+
+[[bin]]
+name = "splitdisk-init"
+path = "src/bin/splitdisk-init.rs"
+
 [lib]
 name = "splitdisk_image"
 path = "src/lib.rs"
@@ -30,5 +38,6 @@ uuid = { workspace = true }
 thiserror = { workspace = true }
 getrandom = { workspace = true }
 tempfile = { workspace = true }
+libc = "0.2"
 
 [dev-dependencies]
