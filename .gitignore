@@ -15,6 +15,9 @@ Thumbs.db
 # Test fixtures (large images)
 testdata/*.img
 testdata/*.bin
+testdata/vendor-blobs/
+testdata/blob-build/
+testdata/det-blobs/
 !testdata/.gitkeep
 
 # Fuzz corpora artifacts
