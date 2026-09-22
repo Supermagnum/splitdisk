@@ -21,7 +21,7 @@ complete system.
 
 ---
 
-## Current status (through Phase 4)
+## Current status (through Phase 6)
 
 Implemented in Rust (file-backed Phase 1 safety model):
 
@@ -34,23 +34,34 @@ Implemented in Rust (file-backed Phase 1 safety model):
 - **Phase 4 boot blobs:** real GRUB EFI, Linux bzImage, and CCID `libccid.so`
   built offline from human-verified `vendor/` trees ([docs/VENDORING.md](docs/VENDORING.md)),
   BLAKE3-pinned in code
+- **Phase 5–6 boot chain (QEMU, file-backed, `-nic none`):**
+  GRUB EFI → kernel → initramfs → Rust `/init` → `splitdisk-assemble --agent`
+  → `pcscd`, with serial markers. A missing protective MBR and initramfs
+  newc modes without `S_IFREG` each blocked that path until fixed.
 
-**Not done yet:**
+**Proven with limits:**
 
-- **No QEMU or hardware boot test** — images are structurally validated, not
-  booted end-to-end
-- **No Galdralag / token ECDH path** — Brainpool ECDH and Mode A outer envelope
-  are blocked on audited crates ([OPEN-QUESTIONS (a)](docs/OPEN-QUESTIONS.md))
-- **No biometric enrollment or verification**
-- **`/init` in the initramfs is still a synthetic stub** (not full mount/exec init)
-- **CCID/pcscd runtime config** may be incomplete (driver copied without full
-  `meson install`; see [OPEN-QUESTIONS (k)](docs/OPEN-QUESTIONS.md))
-- **Reproducibility:** Linux bzImage and CCID `.so` are byte-stable across cold
-  rebuilds in the pinned Docker image (canonical CCID build paths); GRUB EFI
-  output may still vary — [OPEN-QUESTIONS (j)](docs/OPEN-QUESTIONS.md)
+- PC/SC client path with a live ATR via **ifd-vpcd** + `vicc` (test tooling;
+  not the USB CCID driver)
+- In QEMU, production **ifd-ccid.so** is selected for an emulated USB CCID
+  reader (`08e6:4433`) but **ATR still fails** (`Open Port` / init failed).
+  That gap is documented, not closed. The optional probe
+  `scripts/qemu-usb-ccid-atr.sh` is excluded from the default suite while
+  ATR fails.
 
-Do not treat this tree as audited or “secure” for real data until spec gaps are
-closed and independent review has occurred.
+**Still open** (see [docs/OPEN-QUESTIONS.md](docs/OPEN-QUESTIONS.md) rather
+than a full re-list here):
+
+- Galdralag / ClassicalKem remains an **untested stub** (`KemNotAvailable`;
+  no hardware or firmware emulator in CI)
+- Multi-drive interactive PIN/TUI reconstruction is **not** proven
+  end-to-end on the boot path (deferred)
+- USB `ifd-ccid.so` ATR over QEMU or physical CCID hardware
+- Spec crypto items still marked open in OPEN-QUESTIONS (e.g. Brainpool /
+  HKDF wording)
+
+Do not treat this tree as audited or secure for real data until those gaps
+are closed and independent review has occurred.
 
 ---
 
@@ -63,10 +74,12 @@ All builds and tests are intended to run **inside the project container** with
 ./scripts/test.sh
 ```
 
-Uses Docker by default; set `CONTAINER_ENGINE=podman` if needed. The script builds
-`splitdisk-test:phase4`, mounts the repo read-only, uses a large `/tmp` tmpfs
-(default 48g for kernel object files), and runs `scripts/docker-test-inner.sh`
-(fmt, clippy, vendor blob cache check, **kernel byte-repro check**, `cargo test`,
+Uses Docker by default; set `CONTAINER_ENGINE=podman` if needed. The script
+builds `splitdisk-test:phase6`, mounts the repo read-only, uses a large
+`/tmp` tmpfs (default 48g for kernel object files) plus a writable `/run`
+tmpfs for non-root pcscd in the harness, and runs
+`scripts/docker-test-inner.sh` (fmt, clippy, vendor blob cache check,
+kernel byte-repro check, `cargo test`, PC/SC vpcd ATR check, QEMU boot-chain,
 `cargo deny`).
 
 Offline vendor blobs (GRUB / kernel / CCID) are expected under

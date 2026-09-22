@@ -22,6 +22,7 @@ testdata/*.bin
 testdata/vendor-blobs/
 testdata/blob-build/
 testdata/det-blobs/
+testdata/ccid-emulated-nssdb/
 !testdata/.gitkeep
 
 # Fuzz corpora artifacts
