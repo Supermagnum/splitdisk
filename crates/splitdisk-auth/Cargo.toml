@@ -4,10 +4,23 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "PIN, biometric, and Galdralag token integration (Phase 2+)"
+description = "PIN, biometric, and Galdralag token integration"
+
+[features]
+default = []
+# Reduced-cost Argon2 and related test helpers. Off by default; never enable
+# in release/Dockerfile production builds.
+test-hooks = []
 
 [dependencies]
 splitdisk-core = { path = "../splitdisk-core", version = "0.1.0" }
+argon2 = { workspace = true }
+subtle = { workspace = true }
+zeroize = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lib]
 name = "splitdisk_auth"

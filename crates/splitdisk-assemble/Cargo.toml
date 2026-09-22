@@ -4,11 +4,39 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Initramfs assembly agent (Phase 2+)"
+description = "Initramfs assembly agent"
 
 [[bin]]
 name = "splitdisk-assemble"
 path = "src/main.rs"
 
+[[bin]]
+name = "splitdisk-assemble-pause-harness"
+path = "src/bin/pause_harness.rs"
+required-features = ["test-hooks"]
+
+[[test]]
+name = "fault_injection"
+path = "tests/fault_injection.rs"
+required-features = ["test-hooks"]
+
+[lib]
+name = "splitdisk_assemble"
+path = "src/lib.rs"
+
+[features]
+default = []
+test-hooks = ["splitdisk-auth/test-hooks"]
+
 [dependencies]
 splitdisk-core = { path = "../splitdisk-core", version = "0.1.0" }
+splitdisk-auth = { path = "../splitdisk-auth", version = "0.1.0" }
+clap = { workspace = true }
+blake3 = { workspace = true }
+zeroize = { workspace = true }
+subtle = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+splitdisk-create = { path = "../splitdisk-create", version = "0.1.0", features = ["test-hooks"] }
+splitdisk-auth = { path = "../splitdisk-auth", version = "0.1.0", features = ["test-hooks"] }

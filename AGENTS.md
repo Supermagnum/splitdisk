@@ -25,6 +25,9 @@ If anything below disagrees with `docs/SPEC.md`, follow `docs/SPEC.md`.
 4. Do not implement shredding of block devices in Phase 1.
 5. No network access is needed at runtime. Tests must not use the network.
 6. Do not run `sudo`, `mount`, `losetup`, `dd`, or `mkfs` on anything.
+7. Test-only behavior (reduced crypto cost, I/O injection points) must be
+   reachable only via a non-default Cargo feature compiled out of release
+   builds — never via a flag on the shipped binary.
 
 ### Cryptography rules (Phase 1+)
 

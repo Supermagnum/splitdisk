@@ -30,6 +30,14 @@ allow = [
 confidence-threshold = 0.8
 exceptions = []
 
+# Ignore unpublished *workspace* crates only (path packages not on crates.io).
+# crates.io dependencies are still checked against the allow list above; a
+# third-party crate with a disallowed license would still fail `cargo deny`.
+# Motive: cargo-deny 0.16.3's allow-list grammar rejects SPDX "GPL-3.0-only"
+# used by this workspace's Cargo.toml `license` field.
+[licenses.private]
+ignore = true
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

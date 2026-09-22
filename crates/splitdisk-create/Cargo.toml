@@ -4,11 +4,28 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Enrollment tool (Phase 2+)"
+description = "Enrollment tool"
 
 [[bin]]
 name = "splitdisk-create"
 path = "src/main.rs"
 
+[lib]
+name = "splitdisk_create"
+path = "src/lib.rs"
+
+[features]
+default = []
+test-hooks = ["splitdisk-auth/test-hooks"]
+
 [dependencies]
 splitdisk-core = { path = "../splitdisk-core", version = "0.1.0" }
+splitdisk-auth = { path = "../splitdisk-auth", version = "0.1.0" }
+clap = { workspace = true }
+blake3 = { workspace = true }
+zeroize = { workspace = true }
+subtle = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+splitdisk-auth = { path = "../splitdisk-auth", version = "0.1.0", features = ["test-hooks"] }

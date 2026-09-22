@@ -25,7 +25,6 @@ serpent = "0.1"
 twofish = "0.1"
 poly1305 = "0.8"
 hkdf = "0.12"
-argon2 = "0.5"
 blake3 = "1"
 zeroize = { version = "1", features = ["derive"] }
 subtle = "2"
@@ -36,8 +35,18 @@ rand_core = "0.6"
 rand_chacha = "0.3"
 thiserror = "1"
 proptest = "1"
+argon2 = "0.5"
+clap = { version = "4", features = ["derive"] }
+tempfile = "3"
+gpt = "3"
+fatfs = { version = "0.3", default-features = false, features = ["std", "alloc"] }
+cpio = "0.2"
+flate2 = "1"
+uuid = { version = "1", features = ["v4"] }
+byteorder = "1"
 
-# Curves (Brainpool; see docs/OPEN-QUESTIONS.md (a))
+# Curves (Brainpool; see docs/OPEN-QUESTIONS.md (a)) — not used until
+# RustCrypto enables Brainpool arithmetic without the WIP feature gate.
 bp256 = "0.6"
 bp384 = "0.6"
 
