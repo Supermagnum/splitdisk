@@ -196,23 +196,29 @@ if [[ "$BUILD_ONLY" != "all" && "$BUILD_ONLY" != "ccid" ]]; then
 elif [[ -f "$CCID_OUT" && "$FORCE" != "1" ]]; then
   echo "== CCID: cache hit $CCID_OUT =="
 else
-  echo "== CCID: meson build =="
+  echo "== CCID: meson build (canonical /tmp paths + prefix-map) =="
   t0=$(date +%s)
   export SOURCE_DATE_EPOCH="$CCID_EPOCH"
-  export LDFLAGS="-Wl,--build-id=none"
-  B="$BUILD_ROOT/ccid-build"
-  rm -rf "$B"
-  # CCID's meson.build installs into pcsclite usbdropdir (/usr/lib/pcsc/...),
-  # which is read-only in the hardened test container. Compile only and copy
-  # the built IFD shared object from the ninja build dir.
-  meson setup "$B" vendor/ccid \
-    --prefix="$BUILD_ROOT/ccid-prefix" \
+  # Fixed absolute paths inside the container so __FILE__ / DWARF / meson
+  # relative paths do not embed the host bind-mount name (/src vs /work).
+  CCID_SRC=/tmp/splitdisk-ccid-src
+  B=/tmp/splitdisk-ccid-build
+  rm -rf "$CCID_SRC" "$B"
+  rsync -a --delete --exclude .git vendor/ccid/ "$CCID_SRC/"
+  # Meson-native flags (env LDFLAGS alone is not always applied to every link).
+  MAP="-ffile-prefix-map=${CCID_SRC}=. -ffile-prefix-map=${B}=. -fdebug-prefix-map=${CCID_SRC}=. -fdebug-prefix-map=${B}=."
+  meson setup "$B" "$CCID_SRC" \
+    --prefix=/tmp/splitdisk-ccid-prefix \
     -Dembedded=true \
     -Dpcsclite=true \
     -Dudev-rules=false \
     -Denable-extras=false \
-    -Db_ndebug=true
-  meson compile -C "$B"
+    -Db_ndebug=true \
+    -Dc_args="$MAP" \
+    -Dc_link_args="-Wl,--build-id=none"
+  # Single-threaded link for determinism experiments (override with SPLITDISK_CCID_JOBS).
+  CCID_JOBS="${SPLITDISK_CCID_JOBS:-1}"
+  meson compile -C "$B" -j "$CCID_JOBS"
   mkdir -p "$(dirname "$CCID_OUT")"
   SO="$(find "$B" -type f \( -name 'libccid.so' -o -name 'libccid.so.*' \) | head -1)"
   if [[ -z "$SO" ]]; then
@@ -221,12 +227,15 @@ else
     exit 1
   fi
   cp -a "$SO" "$CCID_OUT"
-  # Drop build-id / strip nothing — keep deterministic copy of the link output.
-  # Clear mtime variance on the cache file for pin hashing of content only
-  # (blake3 is content-hash; mtime does not affect digests).
   t1=$(date +%s)
   echo "CCID build wall seconds: $((t1 - t0))"
   echo "CCID source so: $SO"
+  echo "CCID path probe (should lack /src|/work|/vendor absolute):"
+  strings "$CCID_OUT" | grep -E '/(src|work|vendor|home)/' | head -5 || echo '(none)'
+  if command -v readelf >/dev/null 2>&1; then
+    echo "CCID readelf notes (build-id should be absent):"
+    readelf -n "$CCID_OUT" 2>/dev/null | head -20 || true
+  fi
   ls -la "$CCID_OUT"
 fi
 

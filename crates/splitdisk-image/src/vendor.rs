@@ -32,14 +32,18 @@ pub const COMMIT_CCID: &str = "c37cf6cb42279ce9648ff7314180c866d68f9e0d";
 /// only — not a general cross-host guarantee; see OPEN-QUESTIONS (j)):
 /// - **Kernel:** byte-identical across two cold `O=` builds when
 ///   `KBUILD_BUILD_USER/HOST/TIMESTAMP` and per-tree `SOURCE_DATE_EPOCH` are set
-///   (author date of the vendored commit). Enforced in CI via
+///   (author date of the vendored commit). Enforced via
 ///   `scripts/verify-kernel-repro.sh`.
-/// - **GRUB / CCID:** still vary between cold rebuilds in this image; pins catch
-///   drift but do not imply bit-identical rebuilds.
+/// - **CCID:** byte-identical when built from canonical `/tmp/splitdisk-ccid-src`
+///   with Meson `-Dc_args=-ffile-prefix-map…` and `-Dc_link_args=-Wl,--build-id=none`
+///   (avoids embedding bind-mount names like `/src` vs `/work` via `__FILE__`).
+/// - **GRUB:** still may vary between cold rebuilds; pin catches accidental swaps
+///   when the cache matches the recorded digest.
 pub const PIN_GRUB_EFI: &str = "3588528d08ed0d1935fd4a0ab892642ee0a19624a6c7133203ee9d1260e27205";
-/// Confirmed byte-reproducible in the Phase 4 Docker image (see PIN_GRUB_EFI block).
+/// Confirmed byte-reproducible in the Phase 4 Docker image (see pin block above).
 pub const PIN_KERNEL: &str = "84fd57508902cf83c8f80ca4293a004106ed60ef579310de11a78bbd35f1812d";
-pub const PIN_CCID_IFD: &str = "2efa69a93f7bf99bb351842c6f3bfc00eb0efcbedcbb963d22a68bf82108f8e1";
+/// Confirmed byte-reproducible with canonical CCID build paths (see pin block above).
+pub const PIN_CCID_IFD: &str = "787e4af3ae101f71c4d7acbc375c05c76e374e4afc05979c0b98ab7522587d8b";
 
 /// Expected `Linux version …` UTS string fragment when built with fixed Kbuild metadata.
 pub const KERNEL_UTS_VERSION_SNIPPET: &str =
