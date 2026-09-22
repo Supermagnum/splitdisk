@@ -1,4 +1,7 @@
 //! BLAKE3-framed Reed-Solomon shard records (`chunk.bin` stripes).
+//!
+//! Frames do **not** carry `share_index` in cleartext (holder anonymity).
+//! The caller supplies share indices from PIN-unlocked meta at join time.
 
 use super::{FORMAT_VERSION, MAX_FRAMED_LEN};
 use crate::error::{Error, Result};
@@ -11,7 +14,6 @@ pub const CHUNK_MAGIC: &[u8; 4] = b"SDCF";
 #[derive(Debug, Clone)]
 pub struct ChunkFrame {
     pub version: u16,
-    pub share_index: u8,
     pub stripe_index: u64,
     /// Unpadded plaintext/ciphertext bytes in this stripe before zero-pad.
     pub original_stripe_len: u32,
@@ -20,7 +22,7 @@ pub struct ChunkFrame {
     pub data: Vec<u8>,
 }
 
-/// Serialize a chunk frame.
+/// Serialize a chunk frame (no share_index field).
 pub fn write_chunk_frame<W: Write>(w: &mut W, frame: &ChunkFrame) -> Result<()> {
     if frame.data.len() != frame.shard_len as usize {
         return Err(Error::Format("shard_len does not match data"));
@@ -33,7 +35,6 @@ pub fn write_chunk_frame<W: Write>(w: &mut W, frame: &ChunkFrame) -> Result<()> 
     }
     w.write_all(CHUNK_MAGIC)?;
     w.write_all(&frame.version.to_le_bytes())?;
-    w.write_all(&[frame.share_index])?;
     w.write_all(&frame.stripe_index.to_le_bytes())?;
     w.write_all(&frame.original_stripe_len.to_le_bytes())?;
     w.write_all(&frame.shard_len.to_le_bytes())?;
@@ -61,9 +62,6 @@ pub fn parse_chunk_frame<R: Read>(r: &mut R) -> Result<ChunkFrame> {
         return Err(Error::Format("unsupported chunk frame version"));
     }
 
-    let mut share_index = [0u8; 1];
-    read_exact(r, &mut share_index)?;
-
     let mut stripe_b = [0u8; 8];
     read_exact(r, &mut stripe_b)?;
     let stripe_index = u64::from_le_bytes(stripe_b);
@@ -90,7 +88,6 @@ pub fn parse_chunk_frame<R: Read>(r: &mut R) -> Result<ChunkFrame> {
 
     Ok(ChunkFrame {
         version,
-        share_index: share_index[0],
         stripe_index,
         original_stripe_len,
         shard_len,
@@ -142,7 +139,6 @@ mod tests {
         let hash = *blake3::hash(&data).as_bytes();
         let frame = ChunkFrame {
             version: 1,
-            share_index: 2,
             stripe_index: 7,
             original_stripe_len: 100,
             shard_len: data.len() as u32,
@@ -152,7 +148,6 @@ mod tests {
         let mut buf = Vec::new();
         write_chunk_frame(&mut buf, &frame).unwrap();
         let parsed = parse_chunk_frame(&mut Cursor::new(&buf)).unwrap();
-        assert_eq!(parsed.share_index, 2);
         assert_eq!(parsed.stripe_index, 7);
         assert_eq!(parsed.data, frame.data);
         assert_eq!(parsed.hash, hash);
@@ -172,7 +167,6 @@ mod tests {
         let mut buf = Vec::new();
         buf.extend_from_slice(CHUNK_MAGIC);
         buf.extend_from_slice(&1u16.to_le_bytes());
-        buf.push(0);
         buf.extend_from_slice(&0u64.to_le_bytes());
         buf.extend_from_slice(&0u32.to_le_bytes());
         buf.extend_from_slice(&u32::MAX.to_le_bytes());

@@ -222,11 +222,34 @@ pub fn encrypt_stream<R: Read, W: Write>(
 /// successful plaintext is considered committed; partial writes may have
 /// occurred to `output` only for prior verified segments. Callers that need
 /// all-or-nothing should buffer or write to a temp file.
-pub fn decrypt_stream<R: Read, W: Write>(
+pub fn decrypt_stream<R: Read, W: Write>(key: &AeadKey, input: R, output: W) -> Result<u64> {
+    decrypt_stream_with_progress(key, input, output, 0, |_| Ok(()))
+}
+
+/// Progress after a verified plaintext segment is written.
+#[derive(Debug, Clone, Copy)]
+pub struct DecryptSegmentProgress {
+    pub segments_done: u64,
+    pub bytes_written: u64,
+    pub segment_plaintext_blake3: [u8; 32],
+    pub is_final: bool,
+}
+
+/// Decrypt with resume support: skip writing the first `skip_segments` segments
+/// (still authenticated), then invoke `on_segment` after each newly written
+/// segment so callers can update a checkpoint journal.
+pub fn decrypt_stream_with_progress<R, W, F>(
     key: &AeadKey,
     mut input: R,
     mut output: W,
-) -> Result<u64> {
+    skip_segments: u64,
+    mut on_segment: F,
+) -> Result<u64>
+where
+    R: Read,
+    W: Write,
+    F: FnMut(DecryptSegmentProgress) -> Result<()>,
+{
     let mut magic = [0u8; 4];
     read_exact(&mut input, &mut magic)?;
     if &magic != b"SDSE" {
@@ -276,7 +299,6 @@ pub fn decrypt_stream<R: Read, W: Write>(
         let mut len_b = [0u8; 4];
         read_exact(&mut input, &mut len_b)?;
         let ct_len = u32::from_le_bytes(len_b) as usize;
-        // Bound: segment_size + 16-byte tag, plus small slack.
         let max_ct = segment_size
             .checked_add(16)
             .ok_or(Error::Format("segment size overflow"))?;
@@ -304,14 +326,29 @@ pub fn decrypt_stream<R: Read, W: Write>(
         if pt.len() > segment_size {
             return Err(Error::Format("plaintext exceeds segment_size"));
         }
-        // Non-final segments must be full size; final may be shorter.
         if flags & FLAG_FINAL == 0 && pt.len() != segment_size {
             return Err(Error::Format("non-final segment has short plaintext"));
         }
 
-        output.write_all(&pt)?;
-        total_pt = total_pt.saturating_add(pt.len() as u64);
-        if flags & FLAG_FINAL != 0 {
+        let is_final = flags & FLAG_FINAL != 0;
+        let segment_plaintext_blake3 = *blake3::hash(&pt).as_bytes();
+
+        if index >= skip_segments {
+            output.write_all(&pt)?;
+            output.flush()?;
+            total_pt = total_pt.saturating_add(pt.len() as u64);
+            on_segment(DecryptSegmentProgress {
+                segments_done: index + 1,
+                bytes_written: total_pt,
+                segment_plaintext_blake3,
+                is_final,
+            })?;
+        } else {
+            // Resumed past this segment: count toward total for journal math.
+            total_pt = total_pt.saturating_add(pt.len() as u64);
+        }
+
+        if is_final {
             saw_final = true;
         }
         expected_index = expected_index

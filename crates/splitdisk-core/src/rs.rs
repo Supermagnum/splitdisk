@@ -83,7 +83,6 @@ pub fn split_stripes<R: Read, W: Write>(
         for (share_index, shard) in shards.iter().enumerate() {
             let frame = ChunkFrame {
                 version: 1,
-                share_index: share_index as u8,
                 stripe_index,
                 original_stripe_len: nread as u32,
                 shard_len: shard.len() as u32,
@@ -161,9 +160,6 @@ pub fn join_stripes<R: Read, W: Write>(
         for (reader_i, reader) in inputs.iter_mut().enumerate() {
             match parse_chunk_frame(reader) {
                 Ok(frame) => {
-                    if frame.share_index != share_indices[reader_i] {
-                        return Err(Error::Format("share_index mismatch in frame"));
-                    }
                     if frame.stripe_index != expected_stripe {
                         return Err(Error::Format("stripe_index mismatch"));
                     }
@@ -194,7 +190,7 @@ pub fn join_stripes<R: Read, W: Write>(
                         None => shard_len = Some(frame.data.len()),
                         _ => {}
                     }
-                    let idx = frame.share_index as usize;
+                    let idx = share_indices[reader_i] as usize;
                     frames[idx] = Some(frame);
                     got += 1;
                 }

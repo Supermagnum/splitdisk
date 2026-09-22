@@ -113,6 +113,7 @@ fn meta_flip_field_errors() {
         suite_id: 1,
         chunk_blake3: [9u8; 32],
         drive_fingerprint: [8u8; 32],
+        stripe_size: 4096,
     };
     let mut buf = Vec::new();
     write_meta(&mut buf, &m).unwrap();
@@ -130,7 +131,6 @@ fn chunk_truncated_header_errors() {
     let data = vec![1u8, 2, 3];
     let frame = ChunkFrame {
         version: 1,
-        share_index: 0,
         stripe_index: 0,
         original_stripe_len: 3,
         shard_len: 3,

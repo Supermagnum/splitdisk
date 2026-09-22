@@ -1,6 +1,4 @@
-//! `meta.bin` plaintext layout (encrypted with K_pin at rest — Phase 2+).
-//!
-//! This module only defines the plaintext byte layout and a length-safe parser.
+//! `meta.bin` plaintext layout (encrypted with K_pin at rest).
 
 use super::{FORMAT_VERSION, MAX_FRAMED_LEN};
 use crate::error::{Error, Result};
@@ -9,6 +7,9 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Magic: "SDMT" (SplitDisk Meta).
 pub const META_MAGIC: &[u8; 4] = b"SDMT";
+
+/// Fixed plaintext size including Phase 2 `stripe_size` field.
+pub const META_PLAINTEXT_LEN: usize = 4 + 2 + 3 + 2 + 32 + 32 + 4;
 
 /// Plaintext metadata revealed only after PIN success.
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
@@ -21,6 +22,8 @@ pub struct MetaPlaintext {
     pub chunk_blake3: [u8; 32],
     /// Per-drive fingerprint for duplicate detection (not shown in TUI).
     pub drive_fingerprint: [u8; 32],
+    /// RS stripe size used at enrollment (must be divisible by k).
+    pub stripe_size: u32,
 }
 
 pub fn write_meta<W: Write>(w: &mut W, m: &MetaPlaintext) -> Result<()> {
@@ -30,12 +33,12 @@ pub fn write_meta<W: Write>(w: &mut W, m: &MetaPlaintext) -> Result<()> {
     w.write_all(&m.suite_id.to_le_bytes())?;
     w.write_all(&m.chunk_blake3)?;
     w.write_all(&m.drive_fingerprint)?;
+    w.write_all(&m.stripe_size.to_le_bytes())?;
     Ok(())
 }
 
 pub fn parse_meta(bytes: &[u8]) -> Result<MetaPlaintext> {
-    const MIN: usize = 4 + 2 + 3 + 2 + 32 + 32;
-    if bytes.len() < MIN {
+    if bytes.len() < META_PLAINTEXT_LEN {
         return Err(Error::Format("meta too short"));
     }
     if bytes.len() as u64 > MAX_FRAMED_LEN {
@@ -43,6 +46,9 @@ pub fn parse_meta(bytes: &[u8]) -> Result<MetaPlaintext> {
             declared: bytes.len() as u64,
             max: MAX_FRAMED_LEN,
         });
+    }
+    if bytes.len() != META_PLAINTEXT_LEN {
+        return Err(Error::Format("unexpected meta length"));
     }
     if &bytes[0..4] != META_MAGIC {
         return Err(Error::Format("bad meta magic"));
@@ -59,6 +65,10 @@ pub fn parse_meta(bytes: &[u8]) -> Result<MetaPlaintext> {
     chunk_blake3.copy_from_slice(&bytes[11..43]);
     let mut drive_fingerprint = [0u8; 32];
     drive_fingerprint.copy_from_slice(&bytes[43..75]);
+    let stripe_size = u32::from_le_bytes([bytes[75], bytes[76], bytes[77], bytes[78]]);
+    if stripe_size == 0 {
+        return Err(Error::Format("stripe_size must be non-zero"));
+    }
     Ok(MetaPlaintext {
         version,
         share_index,
@@ -67,13 +77,13 @@ pub fn parse_meta(bytes: &[u8]) -> Result<MetaPlaintext> {
         suite_id,
         chunk_blake3,
         drive_fingerprint,
+        stripe_size,
     })
 }
 
 /// Read exactly the fixed-size meta plaintext from a reader.
-#[allow(dead_code)] // used by Phase 2 auth; kept for parser completeness
 pub fn read_meta<R: Read>(r: &mut R) -> Result<MetaPlaintext> {
-    let mut buf = [0u8; 75];
+    let mut buf = [0u8; META_PLAINTEXT_LEN];
     let mut off = 0;
     while off < buf.len() {
         match r.read(&mut buf[off..]) {
@@ -100,19 +110,22 @@ mod tests {
             suite_id: 0x0001,
             chunk_blake3: [0x11; 32],
             drive_fingerprint: [0x22; 32],
+            stripe_size: 4096,
         };
         let mut buf = Vec::new();
         write_meta(&mut buf, &m).unwrap();
+        assert_eq!(buf.len(), META_PLAINTEXT_LEN);
         let p = parse_meta(&buf).unwrap();
         assert_eq!(p.share_index, 2);
         assert_eq!(p.k, 3);
         assert_eq!(p.n, 5);
         assert_eq!(p.chunk_blake3, m.chunk_blake3);
+        assert_eq!(p.stripe_size, 4096);
     }
 
     #[test]
     fn meta_tamper_magic() {
-        let mut buf = vec![0u8; 75];
+        let mut buf = vec![0u8; META_PLAINTEXT_LEN];
         buf[0..4].copy_from_slice(b"XXXX");
         assert!(parse_meta(&buf).is_err());
     }

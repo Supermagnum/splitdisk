@@ -59,6 +59,23 @@ pub enum Error {
 
     #[error("output refused: operation failed before any plaintext was emitted")]
     OutputRefused,
+
+    #[error(
+        "classical KEM / ECDH not available (Brainpool arithmetic gated; see OPEN-QUESTIONS (a))"
+    )]
+    KemNotAvailable,
+
+    #[error("authentication failed")]
+    AuthFailed,
+
+    #[error("PIN attempt limit reached; cool-down required")]
+    AttemptLimitReached,
+
+    #[error("this drive has already been read; please insert a different one")]
+    DuplicateCarrier,
+
+    #[error("checkpoint journal error: {0}")]
+    Journal(&'static str),
 }
 
 impl Error {
