@@ -12,6 +12,10 @@
 .DS_Store
 Thumbs.db
 
+# Local human-verified upstream checkouts (GRUB / linux / CCID / gnulib).
+# Never commit these trees — multi-GiB sources stay on disk only; see docs/VENDORING.md.
+/vendor/
+
 # Test fixtures (large images)
 testdata/*.img
 testdata/*.bin
