@@ -26,14 +26,33 @@ echo "== clippy (default features) =="
 cargo clippy --workspace --all-targets --offline -- -D warnings
 echo "== clippy (test-hooks packages) =="
 cargo clippy "${HOOK_PKGS[@]}" --all-targets --offline "${HOOK_FEATURES[@]}" -- -D warnings
-echo "== Phase 4 vendor blobs (GRUB / kernel / CCID from vendor/, offline) =="
-bash scripts/build-vendor-blobs.sh
-echo "== kernel bzImage byte-repro check (two cold builds, same image) =="
-bash scripts/verify-kernel-repro.sh
+
+HAVE_VENDOR=0
+if [[ -d vendor/grub/.git && -d vendor/linux/.git && -d vendor/ccid/.git && -d vendor/gnulib/.git ]]; then
+  HAVE_VENDOR=1
+fi
+
+if [[ "$HAVE_VENDOR" -eq 1 ]]; then
+  echo "== Phase 4 vendor blobs (GRUB / kernel / CCID from vendor/, offline) =="
+  bash scripts/build-vendor-blobs.sh
+  echo "== kernel bzImage byte-repro check (two cold builds, same image) =="
+  bash scripts/verify-kernel-repro.sh
+else
+  echo "== Phase 4 vendor blobs: SKIPPED (vendor/{grub,linux,ccid,gnulib} not present) =="
+  echo "   Local/full runs: populate vendor/ per docs/VENDORING.md, then re-run."
+  echo "   CI on GitHub Actions has no multi-GiB vendor trees (gitignored)."
+fi
+
 echo "== test (default features) =="
 # Image layout tests embed the release assemble binary (fits fixture sizes).
 cargo build -p splitdisk-assemble --offline --release
-cargo test --workspace --offline
+if [[ "$HAVE_VENDOR" -eq 1 ]]; then
+  cargo test --workspace --offline
+else
+  # Integration tests under splitdisk-image need BLAKE3-pinned vendor blobs.
+  cargo test --workspace --offline --exclude splitdisk-image
+  cargo test -p splitdisk-image --offline --lib --bins
+fi
 echo "== test (test-hooks packages) =="
 cargo test "${HOOK_PKGS[@]}" --offline "${HOOK_FEATURES[@]}"
 echo "== release CLI help has no test hooks =="

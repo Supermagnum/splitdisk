@@ -15,21 +15,26 @@ jobs:
       - name: Build test image
         run: docker build --target test -t splitdisk-test:ci .
 
+      # Match scripts/test.sh hardened flags. Critical: do NOT tmpfs-mount
+      # /home/builder — that wiped the image's cargo fetch at
+      # /home/builder/.cargo and broke --offline resolution.
+      # vendor/ is gitignored and not present on Actions; docker-test-inner
+      # skips Phase 4 blob builds/repro when those trees are absent.
       - name: Run fmt, clippy, test, deny in container
         run: |
           mkdir -p testdata
           docker run --rm \
             --network none \
             --read-only \
-            --tmpfs /tmp:rw,exec,nosuid,nodev,size=2g \
-            --tmpfs /home/builder:rw,nosuid,nodev,size=512m \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,size=8g \
             --cap-drop ALL \
             --security-opt no-new-privileges \
             --user 1000:1000 \
             -v "$PWD:/work:ro" \
             -v "$PWD/testdata:/work/testdata:rw" \
-            -e CARGO_HOME=/tmp/cargo-home \
+            -e CARGO_HOME=/home/builder/.cargo \
             -e CARGO_TARGET_DIR=/tmp/cargo-target \
+            -e SPLITDISK_BLOB_CACHE=/work/testdata/vendor-blobs \
             -e HOME=/home/builder \
             splitdisk-test:ci \
-            bash -c 'mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" && bash scripts/docker-test-inner.sh'
+            bash -c 'mkdir -p "$CARGO_TARGET_DIR" "$SPLITDISK_BLOB_CACHE" && bash scripts/docker-test-inner.sh'
